@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: django-classy-tags
+Version: 0.3.0
+Summary: Class based template tags for Django
+Home-page: http://github.com/ojii/django-classy-tags
+Author: Jonas Obrist
+Author-email: jonas.obrist@divio.ch
+License: UNKNOWN
+Description: UNKNOWN
+Platform: UNKNOWN
