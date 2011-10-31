@@ -23,6 +23,7 @@ floppyforms/templates/floppyforms/radio.html
 floppyforms/templates/floppyforms/select.html
 floppyforms/templates/floppyforms/textarea.html
 floppyforms/templates/floppyforms/gis/google.html
+floppyforms/templates/floppyforms/gis/openlayers-sekizai.html
 floppyforms/templates/floppyforms/gis/openlayers.html
 floppyforms/templates/floppyforms/gis/osm.html
 floppyforms/tests/__init__.py

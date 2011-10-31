@@ -1,6 +1,6 @@
 Metadata-Version: 1.0
 Name: django-floppyforms
-Version: 0.4.2
+Version: 0.4.7
 Summary: Full control of form rendering in the templates
 Home-page: https://github.com/brutasse/django-floppyforms
 Author: Bruno Renie
@@ -36,7 +36,7 @@ Description: Django-floppyforms
         Really? Oh well... Please Report. Or better, fix :)
         
 Platform: UNKNOWN
-Classifier: Development Status :: 3 - Alpha
+Classifier: Development Status :: 4 - Beta
 Classifier: Environment :: Web Environment
 Classifier: Framework :: Django
 Classifier: Intended Audience :: Developers

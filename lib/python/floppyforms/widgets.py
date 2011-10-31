@@ -1,3 +1,5 @@
+from itertools import chain
+
 from django import forms, VERSION
 from django.template import loader
 from django.utils.encoding import force_unicode
@@ -32,15 +34,14 @@ class Input(forms.TextInput):
             'name': name,
             'hidden': self.is_hidden,
             'required': self.is_required,
-            'value': '',
         }
         context.update(extra_context)
 
-        if value:
-            context['value'] = value
+        if value is None:
+            value = ''
 
+        context['value'] = self.format_value(value)
         context.update(self.get_context_data())
-
         attrs.update(self.attrs)
 
         # for things like "checked", set the value to False so that the
@@ -55,6 +56,11 @@ class Input(forms.TextInput):
         context = self.get_context(name, value, attrs=attrs,
                                    extra_context=extra_context)
         return loader.render_to_string(self.template_name, context)
+
+    def format_value(self, value):
+        if value != '':
+            value = force_unicode(value)
+        return value
 
 
 class TextInput(Input):
@@ -138,6 +144,9 @@ if VERSION >= (1, 3):
             context['checkbox_name'] = ccb_name
             context['checkbox_id'] = self.clear_checkbox_id(ccb_name)
             return loader.render_to_string(self.template_name, context)
+
+        def format_value(self, value):
+            return value
 else:
     class ClearableFileInput(FileInput):
         pass
@@ -192,28 +201,35 @@ class PhoneNumberInput(Input):
     input_type = 'tel'
 
 
-class CheckboxInput(forms.CheckboxInput, Input):
+class CheckboxInput(Input, forms.CheckboxInput):
     input_type = 'checkbox'
 
-    def render(self, name, value, attrs=None):
+    def format_value(self, value):
         try:
             result = self.check_test(value)
             if result:
                 self.attrs['checked'] = ''
         except:  # That bare except is in the Django code...
             pass
-        if value not in ('', True, False, None):
+        if value in ('', True, False, None):
+            value = None
+        else:
             value = force_unicode(value)
-        return Input.render(self, name, value, attrs=attrs)
+        return value
 
 
 class Select(forms.Select, Input):
     template_name = 'floppyforms/select.html'
 
     def render(self, name, value, attrs=None, choices=()):
-        if choices:
-            self.choices = choices
-        extra = {'choices': self.choices}
+        if value is None:
+            value = ''
+
+        choices = chain(self.choices, choices)
+        final_choices = []
+        for option_value, option_label in choices:
+            final_choices.append((force_unicode(option_value), option_label))
+        extra = {'choices': final_choices}
         return Input.render(self, name, value, attrs=attrs,
                             extra_context=extra)
 
@@ -241,6 +257,9 @@ class SelectMultiple(forms.SelectMultiple, Select):
     def render(self, name, value, attrs=None, choices=()):
         return Select.render(self, name, value, attrs=attrs, choices=choices)
 
+    def format_value(self, value):
+        return [force_unicode(v) for v in value]
+
 
 class CheckboxSelectMultiple(SelectMultiple):
     template_name = 'floppyforms/checkbox_select.html'
@@ -266,7 +285,7 @@ class SplitDateTimeWidget(MultiWidget):
 
     def decompress(self, value):
         if value:
-            return [value.date(), value.time().replace(microseconds=0)]
+            return [value.date(), value.time().replace(microsecond=0)]
         return [None, None]
 
 

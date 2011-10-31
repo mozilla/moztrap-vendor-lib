@@ -1,3 +1,4 @@
+import datetime
 import os
 
 from django.db import models
@@ -49,6 +50,10 @@ class WidgetRenderingTest(TestCase):
             text = forms.CharField(max_length=2)
 
         self.assertFalse(TextForm(data={'text': 'foo'}).is_valid())
+
+        # Bug #7 - values should be passed as unicode strings
+        rendered = TextForm(data={'text': 0}).as_p()
+        self.assertTrue(' value="0"' in rendered, rendered)
 
     def test_password(self):
         """<input type="password">"""
@@ -270,12 +275,23 @@ class WidgetRenderingTest(TestCase):
 
         form = CBForm(data={'cb': 0})
         self.assertFalse(form.is_valid())
+        rendered = form.as_p()
+        self.assertFalse('value=' in rendered, rendered)
+
         form = CBForm(data={'cb': 1})
         self.assertTrue(form.is_valid())
+        rendered = form.as_p()
+        self.assertFalse('value=' in rendered, rendered)
+
         form = CBForm(data={'cb': True})
         self.assertTrue(form.is_valid())
+        rendered = form.as_p()
+        self.assertFalse('value=' in rendered, rendered)
+
         form = CBForm(data={'cb': 'foo'})
         self.assertTrue(form.is_valid())
+        rendered = form.as_p()
+        self.assertTrue('value="foo"' in rendered, rendered)
 
         rendered = CBForm(initial={'cb': True}).as_p()
         self.assertTrue('checked' in rendered, rendered)
@@ -325,6 +341,26 @@ class WidgetRenderingTest(TestCase):
         rendered = MultiForm(data={'multi': ['fr', 'en']}).as_p()
         self.assertTrue('"fr" selected' in rendered, rendered)
         self.assertTrue('"en" selected' in rendered, rendered)
+
+
+    def test_select_multiple_values(self):
+        """<select multiple>"""
+        CHOICES = (
+            ('1', 'English'),
+            ('12', 'Deutsch'),
+            ('123', 'Francais'),
+        )
+
+        class MultiForm(forms.Form):
+            multi = forms.MultipleChoiceField(choices=CHOICES)
+
+        rendered = MultiForm().as_p()
+        self.assertTrue('multiple' in rendered, rendered)
+
+        rendered = MultiForm(data={'multi': ['123']}).as_p()
+        self.assertFalse('"1" selected' in rendered, rendered)
+        self.assertFalse('"12" selected' in rendered, rendered)
+        self.assertTrue('"123" selected' in rendered, rendered)
 
     def test_cb_multiple(self):
         """CheckboxSelectMultiple"""
@@ -557,3 +593,12 @@ class WidgetRenderingTest(TestCase):
         rendered = MultiForm(data={'multi': ['heh', 'foo']}).as_p()
         self.assertEquals(len(rendered.split('type="hidden"')), 3, rendered)
         self.assertTrue(' required ' in rendered, rendered)
+
+    def test_datetime_with_initial(self):
+        """SplitDateTimeWidget with an initial value"""
+        class DateTimeForm(forms.Form):
+            dt = forms.DateTimeField(initial=datetime.datetime.now(),
+                                     widget=forms.SplitDateTimeWidget)
+
+        rendered = DateTimeForm().as_p()
+        self.assertTrue('value="' in rendered)
