@@ -1,6 +1,9 @@
-from compressor.filters.jsmin.jsmin import jsmin
-from compressor.filters import FilterBase
+from __future__ import absolute_import
+from compressor.filters import CallbackOutputFilter
+from compressor.filters.jsmin.slimit import SlimItFilter
 
-class JSMinFilter(FilterBase):
-    def output(self, **kwargs):
-        return jsmin(self.content)
+class rJSMinFilter(CallbackOutputFilter):
+    callback = "compressor.filters.jsmin.rjsmin.jsmin"
+
+# This is for backwards compatibility
+JSMinFilter = rJSMinFilter

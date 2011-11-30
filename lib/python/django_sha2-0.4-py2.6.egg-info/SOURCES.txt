@@ -1,0 +1,15 @@
+LICENSE
+MANIFEST.in
+README.md
+setup.cfg
+setup.py
+django_sha2/__init__.py
+django_sha2/auth.py
+django_sha2/bcrypt_auth.py
+django_sha2/models.py
+django_sha2.egg-info/PKG-INFO
+django_sha2.egg-info/SOURCES.txt
+django_sha2.egg-info/dependency_links.txt
+django_sha2.egg-info/not-zip-safe
+django_sha2.egg-info/requires.txt
+django_sha2.egg-info/top_level.txt

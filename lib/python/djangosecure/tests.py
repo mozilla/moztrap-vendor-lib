@@ -35,6 +35,9 @@ class SecurityMiddlewareTest(TestCase):
             request_kwargs.update(self.secure_request_kwargs)
         request = (kwargs.pop("request", None) or
                    self.request.get("/some/url", **request_kwargs))
+        ret = self.middleware.process_request(request)
+        if ret:
+            return ret
         return self.middleware.process_response(
             request, self.response(*args, **kwargs))
 
@@ -133,12 +136,47 @@ class SecurityMiddlewareTest(TestCase):
     @override_settings(SECURE_HSTS_SECONDS=0)
     def test_sts_off(self):
         """
-        With SECURE_HSTS_SECONDS of 0, the middleware does not add an
+        With SECURE_HSTS_SECONDS of 0, the middleware does not add a
         "strict-transport-security" header to the response.
 
         """
         self.assertFalse(
             "strict-transport-security" in self.process_response(secure=True))
+
+
+    @override_settings(SECURE_CONTENT_TYPE_NOSNIFF=True)
+    def test_content_type_on(self):
+        """
+        With SECURE_CONTENT_TYPE_NOSNIFF set to True, the middleware adds
+        "x-content-type-options: nosniff" header to the response.
+
+        """
+        self.assertEqual(
+            self.process_response()["x-content-type-options"],
+            "nosniff")
+
+
+    @override_settings(SECURE_CONTENT_TYPE_NO_SNIFF=True)
+    def test_content_type_already_present(self):
+        """
+        The middleware will not override an "x-content-type-options" header
+        already present in the response.
+
+        """
+        response = self.process_response(
+            secure=True,
+            headers={"x-content-type-options": "foo"})
+        self.assertEqual(response["x-content-type-options"], "foo")
+
+
+    @override_settings(SECURE_CONTENT_TYPE_NOSNIFF=False)
+    def test_content_type_off(self):
+        """
+        With SECURE_CONTENT_TYPE_NOSNIFF False, the middleware does not add an
+        "x-content-type-options" header to the response.
+
+        """
+        self.assertFalse("x-content-type-options" in self.process_response())
 
 
     @override_settings(SECURE_SSL_REDIRECT=True)
@@ -148,9 +186,10 @@ class SecurityMiddlewareTest(TestCase):
         requests to the https:// version of the same URL.
 
         """
-        ret = self.process_request("get", "/some/url")
+        ret = self.process_request("get", "/some/url?query=string")
         self.assertEqual(ret.status_code, 301)
-        self.assertEqual(ret["Location"], "https://testserver/some/url")
+        self.assertEqual(
+            ret["Location"], "https://testserver/some/url?query=string")
 
 
     @override_settings(SECURE_SSL_REDIRECT=True)
@@ -218,6 +257,19 @@ class ProxySecurityMiddlewareTest(SecurityMiddlewareTest):
     @property
     def secure_request_kwargs(self):
         return {"HTTP_X_FORWARDED_PROTOCOL": "https"}
+
+
+    def test_is_secure(self):
+        """
+        SecurityMiddleware patches request.is_secure() to report ``True`` even
+        with a proxy-header secure request.
+
+        """
+        request = self.request.get("/some/url", **self.secure_request_kwargs)
+        self.middleware.process_request(request)
+
+        self.assertEqual(request.is_secure(), True)
+
 
 
 
@@ -518,13 +570,32 @@ class CheckFrameDenyTest(TestCase):
 
 
     @override_settings(SECURE_FRAME_DENY=False)
-    def test_no_sts(self):
+    def test_no_frame_deny(self):
         self.assertEqual(
             self.func(), set(["FRAME_DENY_NOT_ENABLED"]))
 
 
     @override_settings(SECURE_FRAME_DENY=True)
-    def test_with_sts(self):
+    def test_with_frame_deny(self):
+        self.assertEqual(self.func(), set())
+
+
+
+class CheckContentTypeNosniffTest(TestCase):
+    @property
+    def func(self):
+        from djangosecure.check.djangosecure import check_content_type_nosniff
+        return check_content_type_nosniff
+
+
+    @override_settings(SECURE_CONTENT_TYPE_NOSNIFF=False)
+    def test_no_content_type_nosniff(self):
+        self.assertEqual(
+            self.func(), set(["CONTENT_TYPE_NOSNIFF_NOT_ENABLED"]))
+
+
+    @override_settings(SECURE_CONTENT_TYPE_NOSNIFF=True)
+    def test_with_content_type_nosniff(self):
         self.assertEqual(self.func(), set())
 
 
@@ -573,10 +644,12 @@ class ConfTest(TestCase):
                     "djangosecure.check.djangosecure.check_security_middleware",
                     "djangosecure.check.djangosecure.check_sts",
                     "djangosecure.check.djangosecure.check_frame_deny",
+                    "djangosecure.check.djangosecure.check_content_type_nosniff",
                     "djangosecure.check.djangosecure.check_ssl_redirect",
                     ],
                 "SECURE_HSTS_SECONDS": 0,
                 "SECURE_FRAME_DENY": False,
+                "SECURE_CONTENT_TYPE_NOSNIFF": False,
                 "SECURE_SSL_REDIRECT": False,
                 "SECURE_SSL_HOST": None,
                 "SECURE_REDIRECT_EXEMPT": [],

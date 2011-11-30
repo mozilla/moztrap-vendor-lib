@@ -1,5 +1,2 @@
-from compressor.base import Compressor
-from compressor.js import JsCompressor
-from compressor.css import CssCompressor
-from compressor.utils import get_hexdigest, get_mtime
-from compressor.exceptions import UncompressableFileError
+# following PEP 386, versiontools will pick it up
+__version__ = (1, 1, 1, "final", 0)
