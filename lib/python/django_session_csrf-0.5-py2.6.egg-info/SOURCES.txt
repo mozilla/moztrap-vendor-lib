@@ -1,0 +1,14 @@
+LICENSE
+MANIFEST.in
+README.rst
+setup.cfg
+setup.py
+django_session_csrf.egg-info/PKG-INFO
+django_session_csrf.egg-info/SOURCES.txt
+django_session_csrf.egg-info/dependency_links.txt
+django_session_csrf.egg-info/not-zip-safe
+django_session_csrf.egg-info/requires.txt
+django_session_csrf.egg-info/top_level.txt
+session_csrf/__init__.py
+session_csrf/models.py
+session_csrf/tests.py
