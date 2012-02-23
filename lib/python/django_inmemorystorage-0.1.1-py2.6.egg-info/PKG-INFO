@@ -1,0 +1,24 @@
+Metadata-Version: 1.0
+Name: django-inmemorystorage
+Version: 0.1.1
+Summary: A non-persistent in-memory data storage backend for Django.
+Home-page: http://github.com/codysoyland/django-inmemorystorage
+Author: Cody Soyland
+Author-email: cody@soyland.com
+License: BSD
+Description: ======================
+        django-inmemorystorage
+        ======================
+        
+        A non-persistent in-memory data storage backend for Django.
+        
+        Compatible with Django's `storage API <https://docs.djangoproject.com/en/dev/ref/files/storage/>`_.
+        
+Platform: UNKNOWN
+Classifier: Development Status :: 4 - Beta
+Classifier: Framework :: Django
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Topic :: Internet :: WWW/HTTP

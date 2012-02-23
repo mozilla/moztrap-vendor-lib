@@ -1,0 +1,9 @@
+../inmemorystorage/__init__.py
+../inmemorystorage/storage.py
+../inmemorystorage/__init__.pyc
+../inmemorystorage/storage.pyc
+./
+SOURCES.txt
+top_level.txt
+dependency_links.txt
+PKG-INFO

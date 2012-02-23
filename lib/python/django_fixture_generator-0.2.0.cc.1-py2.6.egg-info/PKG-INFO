@@ -1,0 +1,53 @@
+Metadata-Version: 1.0
+Name: django-fixture-generator
+Version: 0.2.0.cc.1
+Summary: django-fixture-generator is a reusable django application to make writing fixtures not suck.
+Home-page: http://github.com/alex/django-fixture-generator/tree/master
+Author: Alex Gaynor
+Author-email: alex.gaynor@gmail.com
+License: UNKNOWN
+Description: ``django-fixture-generator``
+        ============================
+        
+        Requires Django 1.2.
+        
+         * Add ``"fixture_generator"`` to your ``INSTALLED_APPS`` setting.
+         * Create a ``fixture_gen.py`` file in one of your apps.  It should look
+           something like:
+           
+            from fixture_generator import fixture_generator
+            
+            from django.contrib.auth.models import User, Group
+            
+            @fixture_generator(User, requires=["my_app.test_groups"])
+            def test_users():
+                muggles, wizards = Group.objects.order_by("name")
+                simon = User.objects.create(username="simon")
+                adrian = User.objects.create(username="adrian")
+                jacob = User.objects.create(username="jacob")
+                
+                simon.groups.add(wizards)
+                adrian.groups.add(muggles)
+                jacob.groups.add(muggles)
+            
+            
+            @fixture_generator(Group)
+            def test_groups():
+                Group.objects.create(name="Muggles")
+                Group.objects.create(name="Wizards")
+         
+         * Run ``manage.py generate_fixture my_app.test_users``.
+         * Save the resulting fixture somewhere. 
+         * Note that you can't create an initial_data.json (or any other format)
+           directly.  If you want to redirect the generate_fixture output to a file,
+           try ``python manage.py generate_fixture my_app.test_users > initial_data.txt``
+           and then rename it after it's generated.
+        
+Platform: UNKNOWN
+Classifier: Development Status :: 4 - Beta
+Classifier: Environment :: Web Environment
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Framework :: Django

@@ -1,0 +1,8 @@
+django_webtest/__init__.py
+django_webtest/backends.py
+django_webtest/middleware.py
+django_webtest/response.py
+django_webtest.egg-info/PKG-INFO
+django_webtest.egg-info/SOURCES.txt
+django_webtest.egg-info/dependency_links.txt
+django_webtest.egg-info/top_level.txt

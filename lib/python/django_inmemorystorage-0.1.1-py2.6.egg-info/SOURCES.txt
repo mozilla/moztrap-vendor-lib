@@ -1,0 +1,6 @@
+django_inmemorystorage.egg-info/PKG-INFO
+django_inmemorystorage.egg-info/SOURCES.txt
+django_inmemorystorage.egg-info/dependency_links.txt
+django_inmemorystorage.egg-info/top_level.txt
+inmemorystorage/__init__.py
+inmemorystorage/storage.py
