@@ -1,6 +1,6 @@
 Metadata-Version: 1.0
 Name: django-compressor
-Version: 1.1.1
+Version: 1.1.2
 Summary: Compresses linked and inline JavaScript or CSS into single cached files.
 Home-page: http://django_compressor.readthedocs.org/
 Author: Jannis Leidel
