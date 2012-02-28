@@ -20,6 +20,11 @@ from django.utils import datetime_safe
 
 NOISY = False
 
+try:
+    from django.utils import timezone
+except ImportError:
+    timezone = False
+
 # Gives information about how to introspect certain fields.
 # This is a list of triples; the first item is a list of fields it applies to,
 # (note that isinstance is used, so superclasses are perfectly valid here)
@@ -83,6 +88,13 @@ introspection_details = [
         {
             "max_digits": ["max_digits", {"default": None}],
             "decimal_places": ["decimal_places", {"default": None}],
+        },
+    ),
+    (
+        (models.SlugField, ),
+        [],
+        {
+            "db_index": ["db_index", {"default": True}],
         },
     ),
     (
@@ -247,10 +259,14 @@ def get_value(field, descriptor):
         # context (and because it changes all the time; people will file bugs otherwise).
         if value == datetime.datetime.now:
             return "datetime.datetime.now"
-        if value == datetime.datetime.utcnow:
+        elif value == datetime.datetime.utcnow:
             return "datetime.datetime.utcnow"
-        if value == datetime.date.today:
+        elif value == datetime.date.today:
             return "datetime.date.today"
+        # In case we use Django's own now function, revert to datetime's
+        # original one since we'll deal with timezones on our own.
+        elif timezone and value == timezone.now:
+            return "datetime.datetime.now"
         # All other callables get called.
         value = value()
     # Models get their own special repr()
@@ -267,11 +283,24 @@ def get_value(field, descriptor):
     # Make sure Decimal is converted down into a string
     if isinstance(value, decimal.Decimal):
         value = str(value)
+    # in case the value is timezone aware
+    datetime_types = (
+        datetime.datetime,
+        datetime.time,
+        datetime_safe.datetime,
+    )
+    if (timezone and isinstance(value, datetime_types) and
+            getattr(settings, 'USE_TZ', False) and
+            value is not None and timezone.is_aware(value)):
+        default_timezone = timezone.get_default_timezone()
+        value = timezone.make_naive(value, default_timezone)
     # datetime_safe has an improper repr value
     if isinstance(value, datetime_safe.datetime):
         value = datetime.datetime(*value.utctimetuple()[:7])
-    if isinstance(value, datetime_safe.date):
-        value = datetime.date(*value.timetuple()[:3])
+    # converting a date value to a datetime to be able to handle
+    # timezones later gracefully
+    elif isinstance(value, (datetime.date, datetime_safe.date)):
+        value = datetime.datetime(*value.timetuple()[:3])
     # Now, apply the converter func if there is one
     if "converter" in options:
         value = options['converter'](value)
@@ -310,7 +339,7 @@ def get_model_fields(model, m2m=False):
     
     # Go through all bases (that are themselves models, but not Model)
     for base in model.__bases__:
-        if base != models.Model and issubclass(base, models.Model):
+        if hasattr(base, '_meta') and issubclass(base, models.Model):
             if not base._meta.abstract:
                 # Looks like we need their fields, Ma.
                 inherited_fields.update(get_model_fields(base))
@@ -371,7 +400,7 @@ def get_model_meta(model):
     # This is called _ormbases as the _bases variable was previously used
     # for a list of full class paths to bases, so we can't conflict.
     for base in model.__bases__:
-        if base != models.Model and issubclass(base, models.Model):
+        if hasattr(base, '_meta') and issubclass(base, models.Model):
             if not base._meta.abstract:
                 # OK, that matches our terms.
                 if "_ormbases" not in meta_def:

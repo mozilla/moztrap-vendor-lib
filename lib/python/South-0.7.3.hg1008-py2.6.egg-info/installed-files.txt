@@ -1,4 +1,3 @@
-../south/utils.py
 ../south/exceptions.py
 ../south/__init__.py
 ../south/v2.py
@@ -24,6 +23,7 @@
 ../south/introspection_plugins/django_timezones.py
 ../south/introspection_plugins/django_taggit.py
 ../south/introspection_plugins/__init__.py
+../south/introspection_plugins/django_audit_log.py
 ../south/introspection_plugins/annoying_autoonetoone.py
 ../south/hacks/__init__.py
 ../south/hacks/django_1_0.py
@@ -35,6 +35,8 @@
 ../south/tests/__init__.py
 ../south/tests/logic.py
 ../south/tests/inspector.py
+../south/tests/freezer.py
+../south/tests/db_mysql.py
 ../south/tests/autodetection.py
 ../south/tests/logger.py
 ../south/db/sql_server/__init__.py
@@ -45,6 +47,7 @@
 ../south/management/commands/datamigration.py
 ../south/management/commands/__init__.py
 ../south/management/commands/convert_to_south.py
+../south/management/commands/migrationcheck.py
 ../south/management/commands/test.py
 ../south/management/commands/schemamigration.py
 ../south/management/commands/syncdb.py
@@ -103,7 +106,8 @@
 ../south/tests/deps_b/migrations/0003_b.py
 ../south/tests/deps_b/migrations/0002_b.py
 ../south/tests/deps_b/migrations/0005_b.py
-../south/utils.pyc
+../south/utils/__init__.py
+../south/utils/datetime_utils.py
 ../south/exceptions.pyc
 ../south/__init__.pyc
 ../south/v2.pyc
@@ -129,6 +133,7 @@
 ../south/introspection_plugins/django_timezones.pyc
 ../south/introspection_plugins/django_taggit.pyc
 ../south/introspection_plugins/__init__.pyc
+../south/introspection_plugins/django_audit_log.pyc
 ../south/introspection_plugins/annoying_autoonetoone.pyc
 ../south/hacks/__init__.pyc
 ../south/hacks/django_1_0.pyc
@@ -140,6 +145,8 @@
 ../south/tests/__init__.pyc
 ../south/tests/logic.pyc
 ../south/tests/inspector.pyc
+../south/tests/freezer.pyc
+../south/tests/db_mysql.pyc
 ../south/tests/autodetection.pyc
 ../south/tests/logger.pyc
 ../south/db/sql_server/__init__.pyc
@@ -150,6 +157,7 @@
 ../south/management/commands/datamigration.pyc
 ../south/management/commands/__init__.pyc
 ../south/management/commands/convert_to_south.pyc
+../south/management/commands/migrationcheck.pyc
 ../south/management/commands/test.pyc
 ../south/management/commands/schemamigration.pyc
 ../south/management/commands/syncdb.pyc
@@ -208,6 +216,8 @@
 ../south/tests/deps_b/migrations/0003_b.pyc
 ../south/tests/deps_b/migrations/0002_b.pyc
 ../south/tests/deps_b/migrations/0005_b.pyc
+../south/utils/__init__.pyc
+../south/utils/datetime_utils.pyc
 ./
 SOURCES.txt
 top_level.txt
