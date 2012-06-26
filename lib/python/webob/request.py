@@ -5,7 +5,10 @@ import os
 import re
 import sys
 import tempfile
-import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 import warnings
 
 from webob.acceptparse import (
@@ -33,6 +36,7 @@ from webob.compat import (
     url_encode,
     url_quote,
     url_unquote,
+    quote_plus,
     urlparse,
     )
 
@@ -44,6 +48,7 @@ from webob.descriptors import (
     converter,
     converter_date,
     environ_getter,
+    environ_decoder,
     parse_auth,
     parse_int,
     parse_int_safe,
@@ -74,7 +79,7 @@ from webob.multidict import (
 
 from webob.util import warn_deprecation
 
-__all__ = ['BaseRequest', 'Request']
+__all__ = ['BaseRequest', 'Request', 'LegacyRequest']
 
 class _NoDefault:
     def __repr__(self):
@@ -88,14 +93,22 @@ http_method_probably_has_body = dict.fromkeys(
 http_method_probably_has_body.update(
     dict.fromkeys(('POST', 'PUT'), True))
 
+_LATIN_ENCODINGS = (
+    'ascii', 'latin-1', 'latin', 'latin_1', 'l1', 'latin1',
+    'iso-8859-1', 'iso8859_1', 'iso_8859_1', 'iso8859', '8859',
+    )
+
 class BaseRequest(object):
     ## The limit after which request bodies should be stored on disk
     ## if they are read in (under this, and the request body is stored
     ## in memory):
     request_body_tempfile_limit = 10*1024
 
+    _charset = None
+
     def __init__(self, environ, charset=None, unicode_errors=None,
                  decode_param_names=None, **kw):
+
         if type(environ) is not dict:
             raise TypeError(
                 "WSGI environ must be a dict; you passed %r" % (environ,))
@@ -138,7 +151,40 @@ class BaseRequest(object):
                         "Unexpected keyword: %s=%r" % (name, value))
                 setattr(self, name, value)
 
-    _charset = None
+    if PY3: # pragma: no cover
+        def encget(self, key, default=NoDefault, encattr=None):
+            val = self.environ.get(key, default)
+            if val is NoDefault:
+                raise KeyError(key)
+            if val is default:
+                return default
+            if not encattr:
+                return val
+            encoding = getattr(self, encattr)
+            if encoding in _LATIN_ENCODINGS: # shortcut
+                return val
+            return bytes_(val, 'latin-1').decode(encoding)
+    else:
+        def encget(self, key, default=NoDefault, encattr=None):
+            val = self.environ.get(key, default)
+            if val is NoDefault:
+                raise KeyError(key)
+            if val is default:
+                return default
+            if encattr is None:
+                return val
+            encoding = getattr(self, encattr)
+            return val.decode(encoding)
+
+    def encset(self, key, val, encattr=None):
+        if encattr:
+            encoding = getattr(self, encattr)
+        else:
+            encoding = 'ascii'
+        if PY3: # pragma: no cover
+            self.environ[key] = bytes_(val, encoding).decode('latin-1')
+        else:
+            self.environ[key] = bytes_(val, encoding)
 
     @property
     def charset(self):
@@ -163,7 +209,8 @@ class BaseRequest(object):
         # cookies and path are always utf-8
         t = Transcoder(charset, errors)
 
-        new_content_type = CHARSET_RE.sub('; charset="UTF-8"', self._content_type_raw)
+        new_content_type = CHARSET_RE.sub('; charset="UTF-8"',
+                                          self._content_type_raw)
         content_type = self.content_type
         r = self.__class__(
             self.environ.copy(),
@@ -263,6 +310,7 @@ class BaseRequest(object):
             self.make_body_seekable()
         return self.body_file_raw
 
+    url_encoding = environ_getter('webob.url_encoding', 'UTF-8')
     scheme = environ_getter('wsgi.url_scheme')
     method = environ_getter('REQUEST_METHOD', 'GET')
     http_version = environ_getter('SERVER_PROTOCOL')
@@ -277,13 +325,12 @@ class BaseRequest(object):
         environ_getter('SERVER_PORT'),
         parse_int, serialize_int, 'int')
 
-    # native strings
-    script_name = environ_getter('SCRIPT_NAME', '')
-    path_info = environ_getter('PATH_INFO')
+    script_name = environ_decoder('SCRIPT_NAME', '', encattr='url_encoding')
+    path_info = environ_decoder('PATH_INFO', encattr='url_encoding')
 
-    # text
-    uscript_name = upath_property('SCRIPT_NAME')
-    upath_info = upath_property('PATH_INFO')
+    # bw compat
+    uscript_name = script_name
+    upath_info = path_info
 
     _content_type_raw = environ_getter('CONTENT_TYPE', '')
 
@@ -329,26 +376,83 @@ class BaseRequest(object):
     headers = property(_headers__get, _headers__set, doc=_headers__get.__doc__)
 
     @property
+    def client_addr(self):
+        """
+        The effective client IP address as a string.  If the
+        ``HTTP_X_FORWARDED_FOR`` header exists in the WSGI environ, this
+        attribute returns the client IP address present in that header
+        (e.g. if the header value is ``192.168.1.1, 192.168.1.2``, the value
+        will be ``192.168.1.1``). If no ``HTTP_X_FORWARDED_FOR`` header is
+        present in the environ at all, this attribute will return the value
+        of the ``REMOTE_ADDR`` header.  If the ``REMOTE_ADDR`` header is
+        unset, this attribute will return the value ``None``.
+
+        .. warning::
+
+           It is possible for user agents to put someone else's IP or just
+           any string in ``HTTP_X_FORWARDED_FOR`` as it is a normal HTTP
+           header. Forward proxies can also provide incorrect values (private
+           IP addresses etc).  You cannot "blindly" trust the result of this
+           method to provide you with valid data unless you're certain that
+           ``HTTP_X_FORWARDED_FOR`` has the correct values.  The WSGI server
+           must be behind a trusted proxy for this to be true.
+        """
+        e = self.environ
+        xff = e.get('HTTP_X_FORWARDED_FOR')
+        if xff is not None:
+            addr = xff.split(',')[0].strip()
+        else:
+            addr = e.get('REMOTE_ADDR')
+        return addr
+
+    @property
+    def host_port(self):
+        """
+        The effective server port number as a string.  If the ``HTTP_HOST``
+        header exists in the WSGI environ, this attribute returns the port
+        number present in that header. If the ``HTTP_HOST`` header exists but
+        contains no explicit port number: if the WSGI url scheme is "https" ,
+        this attribute returns "443", if the WSGI url scheme is "http", this
+        attribute returns "80" .  If no ``HTTP_HOST`` header is present in
+        the environ at all, this attribute will return the value of the
+        ``SERVER_PORT`` header (which is guaranteed to be present).
+        """
+        e = self.environ
+        host = e.get('HTTP_HOST')
+        if host is not None:
+            if ':' in host:
+                host, port = host.split(':', 1)
+            else:
+                url_scheme = e['wsgi.url_scheme']
+                if url_scheme == 'https':
+                    port = '443'
+                else:
+                    port = '80'
+        else:
+            port = e['SERVER_PORT']
+        return port
+
+    @property
     def host_url(self):
         """
         The URL through the host (no path)
         """
         e = self.environ
-        url = e['wsgi.url_scheme'] + '://'
-        if e.get('HTTP_HOST'):
-            host = e['HTTP_HOST']
+        scheme = e.get('wsgi.url_scheme')
+        url = scheme + '://'
+        host = e.get('HTTP_HOST')
+        if host is not None:
             if ':' in host:
                 host, port = host.split(':', 1)
             else:
-
                 port = None
         else:
-            host = e['SERVER_NAME']
-            port = e['SERVER_PORT']
-        if self.environ['wsgi.url_scheme'] == 'https':
+            host = e.get('SERVER_NAME')
+            port = e.get('SERVER_PORT')
+        if scheme == 'https':
             if port == '443':
                 port = None
-        elif self.environ['wsgi.url_scheme'] == 'http':
+        elif scheme == 'http':
             if port == '80':
                 port = None
         url += host
@@ -361,24 +465,25 @@ class BaseRequest(object):
         """
         The URL including SCRIPT_NAME (no PATH_INFO or query string)
         """
-        return self.host_url + url_quote(
-            self.environ.get('SCRIPT_NAME', ''), PATH_SAFE)
+        bscript_name = bytes_(self.script_name, self.url_encoding)
+        return self.host_url + url_quote(bscript_name, PATH_SAFE)
 
     @property
     def path_url(self):
         """
         The URL including SCRIPT_NAME and PATH_INFO, but not QUERY_STRING
         """
-        return self.application_url + url_quote(
-            self.environ.get('PATH_INFO', ''), PATH_SAFE)
+        bpath_info = bytes_(self.path_info, self.url_encoding)
+        return self.application_url + url_quote(bpath_info, PATH_SAFE)
 
     @property
     def path(self):
         """
         The path of the request, without host or query string
         """
-        return (url_quote(self.script_name, PATH_SAFE) +
-                url_quote(self.path_info, PATH_SAFE))
+        bscript = bytes_(self.script_name, self.url_encoding)
+        bpath = bytes_(self.path_info, self.url_encoding)
+        return url_quote(bscript, PATH_SAFE) + url_quote(bpath, PATH_SAFE)
 
     @property
     def path_qs(self):
@@ -397,10 +502,10 @@ class BaseRequest(object):
         The full request URL, including QUERY_STRING
         """
         url = self.path_url
-        if self.environ.get('QUERY_STRING'):
-            url += '?' + self.environ['QUERY_STRING']
+        qs = self.environ.get('QUERY_STRING')
+        if qs:
+            url += '?' + qs
         return url
-
 
     def relative_url(self, other_url, to_application=False):
         """
@@ -547,8 +652,7 @@ class BaseRequest(object):
         only set if you are using a Javascript library that sets it
         (or you set the header yourself manually).  Currently
         Prototype and jQuery are known to set this header."""
-        return self.environ.get('HTTP_X_REQUESTED_WITH', ''
-                               ) == 'XMLHttpRequest'
+        return self.environ.get('HTTP_X_REQUESTED_WITH', '') == 'XMLHttpRequest'
 
     def _host__get(self):
         """Host name provided in HTTP_HOST, with fall-back to SERVER_NAME"""
@@ -591,9 +695,43 @@ class BaseRequest(object):
         self.body = b''
     body = property(_body__get, _body__set, _body__del, doc=_body__get.__doc__)
 
-    @property
-    def json_body(self):
+    def _json_body__get(self):
+        """Access the body of the request as JSON"""
         return json.loads(self.body.decode(self.charset))
+
+    def _json_body__set(self, value):
+        self.body = json.dumps(value, separators=(',', ':')).encode(self.charset)
+
+    def _json_body__del(self):
+        del self.body
+
+    json = json_body = property(_json_body__get, _json_body__set, _json_body__del)
+
+    def _text__get(self):
+        """
+        Get/set the text value of the body
+        """
+        if not self.charset:
+            raise AttributeError(
+                "You cannot access Request.text unless charset is set")
+        body = self.body
+        return body.decode(self.charset)
+
+    def _text__set(self, value):
+        if not self.charset:
+            raise AttributeError(
+                "You cannot access Response.text unless charset is set")
+        if not isinstance(value, text_type):
+            raise TypeError(
+                "You can only set Request.text to a unicode string "
+                "(not %s)" % type(value))
+        self.body = value.encode(self.charset)
+
+    def _text__del(self):
+        del self.body
+
+    text = property(_text__get, _text__set, _text__del, doc=_text__get.__doc__)
+
 
     @property
     def POST(self):
@@ -614,9 +752,10 @@ class BaseRequest(object):
         content_type = self.content_type
         if ((self.method == 'PUT' and not content_type)
             or content_type not in
-                ('', 'application/x-www-form-urlencoded',
+                ('',
+                 'application/x-www-form-urlencoded',
                  'multipart/form-data')
-        ):
+                 ):
             # Not an HTML form submission
             return NoVars('Not an HTML form submission (Content-Type: %s)'
                           % content_type)
@@ -927,7 +1066,8 @@ class BaseRequest(object):
 
 
     if_match = etag_property('HTTP_IF_MATCH', AnyETag, '14.24')
-    if_none_match = etag_property('HTTP_IF_NONE_MATCH', NoETag, '14.26', strong=False)
+    if_none_match = etag_property('HTTP_IF_NONE_MATCH', NoETag, '14.26',
+                                  strong=False)
 
     date = converter_date(environ_getter('HTTP_DATE', None, '14.8'))
     if_modified_since = converter_date(
@@ -1049,7 +1189,8 @@ class BaseRequest(object):
         Content-Length, in that case, the entire file is read).
 
         This reads the request as represented by ``str(req)``; it may
-        not read every valid HTTP request properly."""
+        not read every valid HTTP request properly.
+        """
         start_line = fp.readline()
         is_text = isinstance(start_line, text_type)
         if is_text:
@@ -1131,7 +1272,7 @@ class BaseRequest(object):
     # Will be filled in later:
     ResponseClass = None
 
-    def get_response(self, application, catch_exc_info=False):
+    def send(self, application=None, catch_exc_info=False):
         """
         Like ``.call_application(application)``, except returns a
         response object with ``.status``, ``.headers``, and ``.body``
@@ -1139,7 +1280,12 @@ class BaseRequest(object):
 
         This will use ``self.ResponseClass`` to figure out the class
         of the response object to return.
+
+        If ``application`` is not given, this will send the request to
+        ``self.make_default_send_app()``
         """
+        if application is None:
+            application = self.make_default_send_app()
         if catch_exc_info:
             status, headers, app_iter, exc_info = self.call_application(
                 application, catch_exc_info=True)
@@ -1149,6 +1295,17 @@ class BaseRequest(object):
                 application, catch_exc_info=False)
         return self.ResponseClass(
             status=status, headerlist=list(headers), app_iter=app_iter)
+
+    get_response = send
+
+    def make_default_send_app(self):
+        global _client
+        try:
+            client = _client
+        except NameError:
+            from webob import client
+            _client = client
+        return client.send_request_app
 
     @classmethod
     def blank(cls, path, environ=None, base_url=None,
@@ -1205,6 +1362,44 @@ class BaseRequest(object):
             obj.headers.update(headers)
         return obj
 
+class LegacyRequest(BaseRequest):
+    uscript_name = upath_property('SCRIPT_NAME')
+    upath_info = upath_property('PATH_INFO')
+
+    def encget(self, key, default=NoDefault, encattr=None):
+        val = self.environ.get(key, default)
+        if val is NoDefault:
+            raise KeyError(key)
+        if val is default:
+            return default
+        return val
+
+class AdhocAttrMixin(object):
+    _setattr_stacklevel = 3
+
+    def __setattr__(self, attr, value, DEFAULT=object()):
+        if (getattr(self.__class__, attr, DEFAULT) is not DEFAULT or
+                    attr.startswith('_')):
+            object.__setattr__(self, attr, value)
+        else:
+            self.environ.setdefault('webob.adhoc_attrs', {})[attr] = value
+
+    def __getattr__(self, attr, DEFAULT=object()):
+        try:
+            return self.environ['webob.adhoc_attrs'][attr]
+        except KeyError:
+            raise AttributeError(attr)
+
+    def __delattr__(self, attr, DEFAULT=object()):
+        if getattr(self.__class__, attr, DEFAULT) is not DEFAULT:
+            return object.__delattr__(self, attr)
+        try:
+            del self.environ['webob.adhoc_attrs'][attr]
+        except KeyError:
+            raise AttributeError(attr)
+
+class Request(AdhocAttrMixin, BaseRequest):
+    """ The default request implementation """
 
 def environ_from_url(path):
     if SCHEME_RE.search(path):
@@ -1287,36 +1482,6 @@ def environ_add_POST(env, data, content_type=None):
     env['webob.is_body_seekable'] = True
     env['CONTENT_LENGTH'] = str(len(data))
     env['CONTENT_TYPE'] = content_type
-
-
-
-class AdhocAttrMixin(object):
-    _setattr_stacklevel = 3
-
-    def __setattr__(self, attr, value, DEFAULT=object()):
-        if (getattr(self.__class__, attr, DEFAULT) is not DEFAULT or
-                    attr.startswith('_')):
-            object.__setattr__(self, attr, value)
-        else:
-            self.environ.setdefault('webob.adhoc_attrs', {})[attr] = value
-
-    def __getattr__(self, attr, DEFAULT=object()):
-        try:
-            return self.environ['webob.adhoc_attrs'][attr]
-        except KeyError:
-            raise AttributeError(attr)
-
-    def __delattr__(self, attr, DEFAULT=object()):
-        if getattr(self.__class__, attr, DEFAULT) is not DEFAULT:
-            return object.__delattr__(self, attr)
-        try:
-            del self.environ['webob.adhoc_attrs'][attr]
-        except KeyError:
-            raise AttributeError(attr)
-
-
-class Request(AdhocAttrMixin, BaseRequest):
-    """ The default request implementation """
 
 
 
@@ -1407,9 +1572,11 @@ class FakeCGIBody(io.RawIOBase):
         if self.file is None:
             if self.content_type.startswith(
                 'application/x-www-form-urlencoded'):
-                # TODO: check if bytes_ is necessary
-                data = bytes_(url_encode(self.vars), 'utf8')
-                self.file = io.BytesIO(data)
+                data = '&'.join(
+                    '%s=%s' % (quote_plus(bytes_(k, 'utf8')), quote_plus(bytes_(v, 'utf8')))
+                    for k,v in self.vars.items()
+                )
+                self.file = io.BytesIO(bytes_(data))
             elif self.content_type.startswith('multipart/form-data'):
                 self.file = _encode_multipart(
                     self.vars.items(),
@@ -1534,9 +1701,10 @@ class Transcoder(object):
         )
         return fout
 
-
 # TODO: remove in 1.4
 for _name in 'GET POST params cookies'.split():
     _str_name = 'str_'+_name
-    _prop = deprecated_property(None, _str_name, "disabled starting WebOb 1.2, use %s instead" % _name, '1.2')
+    _prop = deprecated_property(
+        None, _str_name,
+        "disabled starting WebOb 1.2, use %s instead" % _name, '1.2')
     setattr(BaseRequest, _str_name, _prop)

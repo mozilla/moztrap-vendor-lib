@@ -77,7 +77,8 @@ class Accept(object):
         result = []
         for mask, quality in self._parsed:
             if quality != 1:
-                mask = '%s;q=%0.1f' % (mask, quality)
+                mask = '%s;q=%0.*f' % (
+                    mask, min(len(str(quality).split('.')[1]), 3), quality)
             result.append(mask)
         return ', '.join(result)
 
@@ -224,7 +225,7 @@ class NilAccept(object):
 
     def best_match(self, offers, default_match=None):
         best_quality = -1
-        best_match = default_match
+        best_offer = default_match
         for offer in offers:
             _check_offer(offer)
             if isinstance(offer, (list, tuple)):

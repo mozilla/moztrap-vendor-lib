@@ -88,3 +88,15 @@ def print_stderr(value):
             except:
                 value = repr(value)
         sys.stderr.write(value)
+
+try:
+    next = next
+except NameError:
+    # python < 2.6
+    def next(iterator):
+        return iterator.next()
+
+try:
+    from collections import OrderedDict
+except ImportError:
+    OrderedDict = dict

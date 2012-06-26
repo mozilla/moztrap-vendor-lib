@@ -57,20 +57,50 @@ def environ_getter(key, default=_not_given, rfc_section=None):
     return property(fget, fset, fdel, doc=doc)
 
 
+def environ_decoder(key, default=_not_given, rfc_section=None,
+                    encattr=None):
+    if rfc_section:
+        doc = header_docstring(key, rfc_section)
+    else:
+        doc = "Gets and sets the ``%s`` key in the environment." % key
+    if default is _not_given:
+        def fget(req):
+            return req.encget(key, encattr=encattr)
+        def fset(req, val):
+            return req.encset(key, val, encattr=encattr)
+        fdel = None
+    else:
+        def fget(req):
+            return req.encget(key, default, encattr=encattr)
+        def fset(req, val):
+            if val is None:
+                if key in req.environ:
+                    del req.environ[key]
+            else:
+                return req.encset(key, val, encattr=encattr)
+        def fdel(req):
+            del req.environ[key]
+    return property(fget, fset, fdel, doc=doc)
+
 def upath_property(key):
     if PY3: # pragma: no cover
         def fget(req):
-            return req.environ.get(key, '').encode('latin-1').decode('utf8')
+            encoding = req.url_encoding
+            return req.environ.get(key, '').encode('latin-1').decode(encoding)
         def fset(req, val):
-            req.environ[key] = val.encode('utf8').decode('latin-1')
+            encoding = req.url_encoding
+            req.environ[key] = val.encode(encoding).decode('latin-1')
     else:
         def fget(req):
-            return req.environ.get(key, '').decode('utf8')
+            encoding = req.url_encoding
+            return req.environ.get(key, '').decode(encoding)
         def fset(req, val):
-            if isinstance(val, unicode):
-                val = val.encode('utf8')
+            encoding = req.url_encoding
+            if isinstance(val, text_type):
+                val = val.encode(encoding)
             req.environ[key] = val
     return property(fget, fset, doc='upath_property(%r)' % key)
+
 
 def deprecated_property(attr, name, text, version): # pragma: no cover
     """
@@ -282,7 +312,8 @@ def parse_auth_params(params):
     return r
 
 # see http://lists.w3.org/Archives/Public/ietf-http-wg/2009OctDec/0297.html
-known_auth_schemes = ['Basic', 'Digest', 'WSSE', 'HMACDigest', 'GoogleLogin', 'Cookie', 'OpenID']
+known_auth_schemes = ['Basic', 'Digest', 'WSSE', 'HMACDigest', 'GoogleLogin',
+                      'Cookie', 'OpenID']
 known_auth_schemes = dict.fromkeys(known_auth_schemes, None)
 
 def parse_auth(val):

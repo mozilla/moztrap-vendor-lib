@@ -7,6 +7,10 @@ from hashlib import md5
 import re
 import struct
 import zlib
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 from webob.byterange import ContentRange
 
@@ -55,7 +59,7 @@ from webob.descriptors import (
 
 from webob.headers import ResponseHeaders
 from webob.request import BaseRequest
-from webob.util import status_reasons
+from webob.util import status_reasons, status_generic_reasons
 
 __all__ = ['Response']
 
@@ -83,6 +87,14 @@ class Response(object):
     def __init__(self, body=None, status=None, headerlist=None, app_iter=None,
                  content_type=None, conditional_response=None,
                  **kw):
+        if app_iter is None and body is None and ('json_body' in kw or 'json' in kw):
+            if 'json_body' in kw:
+                json_body = kw.pop('json_body')
+            else:
+                json_body = kw.pop('json')
+            body = json.dumps(json_body, separators=(',', ':'))
+            if content_type is None:
+                content_type = 'application/json'
         if app_iter is None:
             if body is None:
                 body = b''
@@ -104,11 +116,14 @@ class Response(object):
         if 'charset' in kw:
             charset = kw.pop('charset')
         elif self.default_charset:
-            if content_type and (content_type == 'text/html'
-                                 or content_type.startswith('text/')
-                                 or content_type.startswith('application/xml')
-                                 or (content_type.startswith('application/')
-                                     and content_type.endswith('+xml'))):
+            if (content_type
+                and 'charset=' not in content_type
+                and (content_type == 'text/html'
+                    or content_type.startswith('text/')
+                    or content_type.startswith('application/xml')
+                    or content_type.startswith('application/json')
+                    or (content_type.startswith('application/')
+                         and (content_type.endswith('+xml') or content_type.endswith('+json'))))):
                 charset = self.default_charset
         if content_type and charset:
             content_type += '; charset=' + charset
@@ -219,7 +234,7 @@ class Response(object):
         return '\n'.join(parts)
 
     #
-    # status, status_int
+    # status, status_code/status_int
     #
 
     def _status__get(self):
@@ -230,7 +245,7 @@ class Response(object):
 
     def _status__set(self, value):
         if isinstance(value, int):
-            self.status_int = value
+            self.status_code = value
             return
         if PY3: # pragma: no cover
             if isinstance(value, bytes):
@@ -242,20 +257,28 @@ class Response(object):
                 "You must set status to a string or integer (not %s)"
                 % type(value))
         if ' ' not in value:
-            value += ' ' + status_reasons[int(value)]
+             try:
+                value += ' ' + status_reasons[int(value)]
+             except KeyError:
+                value += ' ' + status_generic_reasons[int(value) // 100]
         self._status = value
 
     status = property(_status__get, _status__set, doc=_status__get.__doc__)
 
-    def _status_int__get(self):
+    def _status_code__get(self):
         """
         The status as an integer
         """
         return int(self._status.split()[0])
-    def _status_int__set(self, code):
-        self._status = '%d %s' % (code, status_reasons[code])
-    status_int = property(_status_int__get, _status_int__set,
-                          doc=_status_int__get.__doc__)
+
+    def _status_code__set(self, code):
+        try:
+            self._status = '%d %s' % (code, status_reasons[code])
+        except KeyError:
+            self._status = '%d %s' % (code, status_generic_reasons[code // 100])
+
+    status_code = status_int = property(_status_code__get, _status_code__set,
+                           doc=_status_code__get.__doc__)
 
 
     #
@@ -358,6 +381,19 @@ class Response(object):
 #         #self.content_length = None
 
     body = property(_body__get, _body__set, _body__set)
+
+    def _json_body__get(self):
+        """Access the body of the response as JSON"""
+        # Note: UTF-8 is a content-type specific default for JSON:
+        return json.loads(self.body.decode(self.charset or 'UTF-8'))
+
+    def _json_body__set(self, value):
+        self.body = json.dumps(value, separators=(',', ':')).encode(self.charset or 'UTF-8')
+
+    def _json_body__del(self):
+        del self.body
+
+    json = json_body = property(_json_body__get, _json_body__set, _json_body__del)
 
 
     #
@@ -658,7 +694,75 @@ class Response(object):
                    path='/', domain=None, secure=False, httponly=False,
                    comment=None, expires=None, overwrite=False):
         """
-        Set (add) a cookie for the response
+        Set (add) a cookie for the response.
+
+        Arguments are:
+
+        ``key``
+
+           The cookie name.
+
+        ``value``
+
+           The cookie value, which should be a string or ``None``.  If
+           ``value`` is ``None``, it's equivalent to calling the
+           :meth:`webob.response.Response.unset_cookie` method for this
+           cookie key (it effectively deletes the cookie on the client).
+
+        ``max_age``
+
+           An integer representing a number of seconds or ``None``.  If this
+           value is an integer, it is used as the ``Max-Age`` of the
+           generated cookie.  If ``expires`` is not passed and this value is
+           an integer, the ``max_age`` value will also influence the
+           ``Expires`` value of the cookie (``Expires`` will be set to now +
+           max_age).  If this value is ``None``, the cookie will not have a
+           ``Max-Age`` value (unless ``expires`` is also sent).
+
+        ``path``
+
+           A string representing the cookie ``Path`` value.  It defaults to
+           ``/``.
+
+        ``domain``
+
+           A string representing the cookie ``Domain``, or ``None``.  If
+           domain is ``None``, no ``Domain`` value will be sent in the
+           cookie.
+
+        ``secure``
+
+           A boolean.  If it's ``True``, the ``secure`` flag will be sent in
+           the cookie, if it's ``False``, the ``secure`` flag will not be
+           sent in the cookie.
+
+        ``httponly``
+
+           A boolean.  If it's ``True``, the ``HttpOnly`` flag will be sent
+           in the cookie, if it's ``False``, the ``HttpOnly`` flag will not
+           be sent in the cookie.
+
+        ``comment``
+
+           A string representing the cookie ``Comment`` value, or ``None``.
+           If ``comment`` is ``None``, no ``Comment`` value will be sent in
+           the cookie.
+
+        ``expires``
+
+           A ``datetime.timedelta`` object representing an amount of time or
+           the value ``None``.  A non-``None`` value is used to generate the
+           ``Expires`` value of the generated cookie.  If ``max_age`` is not
+           passed, but this value is not ``None``, it will influence the
+           ``Max-Age`` header (``Max-Age`` will be 'expires_value -
+           datetime.utcnow()').  If this value is ``None``, the ``Expires``
+           cookie value will be unset (unless ``max_age`` is also passed).
+
+        ``overwrite``
+
+           If this key is ``True``, before setting the cookie, unset any
+           existing cookie.
+
         """
         if overwrite:
             self.unset_cookie(key, strict=False)
@@ -922,16 +1026,13 @@ class Response(object):
         """Returns a headerlist, with the Location header possibly
         made absolute given the request environ.
         """
-        headerlist = self.headerlist
-        for name, value in headerlist:
+        headerlist = list(self.headerlist)
+        for i, (name, value) in enumerate(headerlist):
             if name.lower() == 'location':
                 if SCHEME_RE.search(value):
                     break
-                new_location = urlparse.urljoin(
-                    _request_uri(environ), value)
-                headerlist = list(headerlist)
-                idx = headerlist.index((name, value))
-                headerlist[idx] = (name, new_location)
+                new_location = urlparse.urljoin(_request_uri(environ), value)
+                headerlist[i] = (name, new_location)
                 break
         return headerlist
 
@@ -947,7 +1048,8 @@ class Response(object):
         """
         req = BaseRequest(environ)
         headerlist = self._abs_headerlist(environ)
-        if req.method in self._safe_methods:
+        method = environ.get('REQUEST_METHOD', 'GET')
+        if method in self._safe_methods:
             status304 = False
             if req.if_none_match and self.etag:
                 status304 = self.etag in req.if_none_match
@@ -958,8 +1060,8 @@ class Response(object):
                 return EmptyResponse(self._app_iter)
         if (req.range and self in req.if_range
             and self.content_range is None
-            and req.method in ('HEAD', 'GET')
-            and self.status_int == 200
+            and method in ('HEAD', 'GET')
+            and self.status_code == 200
             and self.content_length is not None
         ):
             content_range = req.range.content_range(self.content_length)
@@ -974,7 +1076,7 @@ class Response(object):
                 ] + filter_headers(headerlist)
                 start_response('416 Requested Range Not Satisfiable',
                                headerlist)
-                if req.method == 'HEAD':
+                if method == 'HEAD':
                     return ()
                 return [body]
             else:
@@ -990,12 +1092,12 @@ class Response(object):
                         ('Content-Range', str(content_range)),
                     ] + filter_headers(headerlist, ('content-length',))
                     start_response('206 Partial Content', headerlist)
-                    if req.method == 'HEAD':
+                    if method == 'HEAD':
                         return EmptyResponse(app_iter)
                     return app_iter
 
         start_response(self.status, headerlist)
-        if req.method == 'HEAD':
+        if method  == 'HEAD':
             return EmptyResponse(self._app_iter)
         return self._app_iter
 
@@ -1143,12 +1245,19 @@ def _request_uri(environ):
     elif url.endswith(':443') and environ['wsgi.url_scheme'] == 'https':
         url = url[:-4]
 
-    url += url_quote(environ.get('SCRIPT_NAME') or '/')
-    path_info = url_quote(environ.get('PATH_INFO',''))
-    if not environ.get('SCRIPT_NAME'):
-        url += path_info[1:]
+    if PY3: # pragma: no cover
+        script_name = bytes_(environ.get('SCRIPT_NAME', '/'), 'latin-1')
+        path_info = bytes_(environ.get('PATH_INFO', ''), 'latin-1')
     else:
-        url += path_info
+        script_name = environ.get('SCRIPT_NAME', '/')
+        path_info = environ.get('PATH_INFO', '')
+
+    url += url_quote(script_name)
+    qpath_info = url_quote(path_info)
+    if not 'SCRIPT_NAME' in environ:
+        url += qpath_info[1:]
+    else:
+        url += qpath_info
     return url
 
 

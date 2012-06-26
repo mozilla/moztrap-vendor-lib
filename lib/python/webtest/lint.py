@@ -114,9 +114,15 @@ Some of the things this checks:
 import re
 import sys
 import warnings
+from webtest.compat import next
 
 header_re = re.compile(r'^[a-zA-Z][a-zA-Z0-9\-_]*$')
 bad_header_value_re = re.compile(r'[\000-\037]')
+
+valid_methods = (
+    'GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE',
+    'TRACE', 'PATCH',
+  )
 
 
 class WSGIWarning(Warning):
@@ -270,10 +276,7 @@ class IteratorWrapper(object):
     def next(self):
         assert not self.closed, (
             "Iterator read after closed")
-        try:
-            v = next(self.iterator)
-        except NameError:
-            v = self.iterator.next()
+        v = next(self.iterator)
         if self.check_start_response is not None:
             assert self.check_start_response, (
                 "The application returns and we started iterating over its"
@@ -340,8 +343,7 @@ def check_environ(environ):
     check_errors(environ['wsgi.errors'])
 
     # @@: these need filling out:
-    if environ['REQUEST_METHOD'] not in (
-        'GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE', 'TRACE'):
+    if environ['REQUEST_METHOD'] not in valid_methods:
         warnings.warn(
             "Unknown REQUEST_METHOD: %r" % environ['REQUEST_METHOD'],
             WSGIWarning)
@@ -443,7 +445,7 @@ def check_content_type(status, headers):
             else:
                 assert 0, (("Content-Type header found in a %s response, "
                             "which must not return content.") % code)
-    if code not in NO_MESSAGE_BODY:
+    if code not in NO_MESSAGE_BODY and length is not None and length > 0:
         assert 0, "No Content-Type header found in headers (%s)" % headers
 
 

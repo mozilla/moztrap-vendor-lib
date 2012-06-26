@@ -1,7 +1,5 @@
 # code stolen from "six"
 
-import cgi
-import os
 import sys
 import types
 
@@ -19,6 +17,7 @@ else:
     integer_types = (int, long)
     class_types = (type, types.ClassType)
     text_type = unicode
+    long = long
 
 # TODO check if errors is ever used
 
@@ -52,10 +51,11 @@ if PY3: # pragma: no cover
     from urllib import parse
     urlparse = parse
     from urllib.parse import quote as url_quote
-    from urllib.parse import urlencode as url_encode
+    from urllib.parse import urlencode as url_encode, quote_plus
     from urllib.request import urlopen as url_open
 else:
     import urlparse
+    from urllib import quote_plus
     from urllib import quote as url_quote
     from urllib import unquote as url_unquote
     from urllib import urlencode as url_encode

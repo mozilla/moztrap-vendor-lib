@@ -8,12 +8,9 @@ Routines for testing WSGI applications.
 Most interesting is TestApp
 """
 
-import sys
 import random
-import urllib
 import warnings
 import mimetypes
-import time
 import cgi
 import os
 import re
@@ -33,6 +30,7 @@ from webtest.compat import text_type
 from webtest.compat import to_string
 from webtest.compat import to_bytes
 from webtest.compat import join_bytes
+from webtest.compat import OrderedDict
 from webtest.compat import dumps
 from webtest.compat import loads
 from webtest.compat import PY3
@@ -41,7 +39,7 @@ from webob import Request, Response
 if PY3:
     from webtest import lint3 as lint
 else:
-    from webtest import lint
+    from webtest import lint  # NOQA
 
 __all__ = ['TestApp', 'TestRequest']
 
@@ -51,28 +49,26 @@ class NoDefault(object):
 
 
 class AppError(Exception):
-    pass
 
-
-class CaptureStdout(object):
-
-    def __init__(self, actual):
-        self.captured = StringIO()
-        self.actual = actual
-
-    def write(self, s):
-        self.captured.write(s)
-        self.actual.write(s)
-
-    def flush(self):
-        self.actual.flush()
-
-    def writelines(self, lines):
-        for item in lines:
-            self.write(item)
-
-    def getvalue(self):
-        return self.captured.getvalue()
+    def __init__(self, message, *args):
+        message = to_string(message)
+        str_args = ()
+        for arg in args:
+            if isinstance(arg, Response):
+                body = arg.body
+                if isinstance(body, binary_type):
+                    if arg.charset:
+                        arg = body.decode(arg.charset)
+                    else:
+                        arg = repr(body)
+            elif isinstance(arg, binary_type):
+                try:
+                    arg = to_string(arg)
+                except UnicodeDecodeError:
+                    arg = repr(arg)
+            str_args += (arg,)
+        message = message % str_args
+        Exception.__init__(self, message)
 
 
 class TestResponse(Response):
@@ -759,17 +755,33 @@ class TestApp(object):
         Do a generic request.
         """
         environ = self._make_environ(extra_environ)
-        # @@: Should this be all non-strings?
-        params = encode_params(params, content_type)
-        if upload_files or \
-            (content_type and to_string(content_type).startswith('multipart')):
-            params = cgi.parse_qsl(params, keep_blank_values=True)
+
+        inline_uploads = []
+
+        # this supports OrderedDict
+        if isinstance(params, dict) or hasattr(params, 'items'):
+            params = list(params.items())
+
+        if isinstance(params, (list, tuple)):
+            inline_uploads = [v for (k,v) in params
+                              if isinstance(v, (File, Upload))]
+
+        if len(inline_uploads) > 0:
             content_type, params = self.encode_multipart(
                 params, upload_files or ())
             environ['CONTENT_TYPE'] = content_type
-        elif params:
-            environ.setdefault('CONTENT_TYPE',
+        else:
+            params = encode_params(params, content_type)
+            if upload_files or \
+                (content_type and to_string(content_type).startswith('multipart')):
+                params = cgi.parse_qsl(params, keep_blank_values=True)
+                content_type, params = self.encode_multipart(
+                    params, upload_files or ())
+                environ['CONTENT_TYPE'] = content_type
+            elif params:
+                environ.setdefault('CONTENT_TYPE',
                                'application/x-www-form-urlencoded')
+
         if '?' in url:
             url, environ['QUERY_STRING'] = url.split('?', 1)
         else:
@@ -798,6 +810,14 @@ class TestApp(object):
         just ``[(fieldname, filename)]`` and the file content will be
         read from disk.
 
+        For post requests params could be a collections.OrderedDict with
+        Upload fields included in order:
+
+            app.post('/myurl', collections.OrderedDict([
+                ('textfield1', 'value1'),
+                ('uploadfield', webapp.Upload('filename.txt', 'contents'),
+                ('textfield2', 'value2')])))
+
         Returns a ``webob.Response`` object.
         """
         return self._gen_request('POST', url, params=params, headers=headers,
@@ -806,8 +826,8 @@ class TestApp(object):
                                  expect_errors=expect_errors,
                                  content_type=content_type)
 
-    def post_json(self, url, params='', headers=None, extra_environ=None,
-                  status=None, expect_errors=False):
+    def post_json(self, url, params=NoDefault, headers=None,
+                  extra_environ=None, status=None, expect_errors=False):
         """
         Do a POST request.  Very like the ``.get()`` method.
         ``params`` are dumps to json and put in the body of the request.
@@ -816,7 +836,7 @@ class TestApp(object):
         Returns a ``webob.Response`` object.
         """
         content_type = 'application/json'
-        if params:
+        if params is not NoDefault:
             params = dumps(params)
         return self._gen_request('POST', url, params=params, headers=headers,
                                  extra_environ=extra_environ, status=status,
@@ -842,7 +862,7 @@ class TestApp(object):
                                  expect_errors=expect_errors,
                                  content_type=content_type)
 
-    def put_json(self, url, params='', headers=None, extra_environ=None,
+    def put_json(self, url, params=NoDefault, headers=None, extra_environ=None,
             status=None, expect_errors=False):
         """
         Do a PUT request.  Very like the ``.post()`` method.
@@ -852,7 +872,7 @@ class TestApp(object):
         Returns a ``webob.Response`` object.
         """
         content_type = 'application/json'
-        if params:
+        if params is not NoDefault:
             params = dumps(params)
         return self._gen_request('PUT', url, params=params, headers=headers,
                                  extra_environ=extra_environ, status=status,
@@ -877,8 +897,8 @@ class TestApp(object):
                                  expect_errors=expect_errors,
                                  content_type=content_type)
 
-    def delete_json(self, url, params='', headers=None, extra_environ=None,
-               status=None, expect_errors=False):
+    def delete_json(self, url, params=NoDefault, headers=None,
+                    extra_environ=None, status=None, expect_errors=False):
         """
         Do a DELETE request.  Very like the ``.get()`` method.
         Content-Type is set to ``application/json``.
@@ -890,7 +910,7 @@ class TestApp(object):
                            'DELETE request. Most web servers will ignore it'),
                            lint.WSGIWarning)
         content_type = 'application/json'
-        if params:
+        if params is not NoDefault:
             params = dumps(params)
         return self._gen_request('DELETE', url, params=params, headers=headers,
                                  extra_environ=extra_environ, status=status,
@@ -930,12 +950,14 @@ class TestApp(object):
         """
         boundary = '----------a_BoUnDaRy%s$' % random.random()
         lines = []
-        for key, value in params:
+
+        def _append_value(key, value):
             lines.append('--' + boundary)
             lines.append('Content-Disposition: form-data; name="%s"' % key)
             lines.append('')
             lines.append(value)
-        for file_info in files:
+
+        def _append_file(file_info):
             key, filename, value = self._get_file_info(file_info)
             lines.append('--' + boundary)
             lines.append(
@@ -946,6 +968,22 @@ class TestApp(object):
                          (fcontent or 'application/octet-stream'))
             lines.append('')
             lines.append(value)
+
+        for key, value in params:
+            if isinstance(value, File):
+                if value.value:
+                    _append_file([key] + list(value.value))
+            elif isinstance(value, Upload):
+                file_info = [key, value.filename]
+                if value.file_content is not None:
+                    file_info.append(value.file_content)
+                _append_file(file_info)
+            else:
+                _append_value(key, value)
+
+        for file_info in files:
+            _append_file(file_info)
+
         lines.append('--' + boundary + '--')
         lines.append('')
         body = join_bytes('\r\n', lines)
@@ -1043,17 +1081,9 @@ class TestApp(object):
         req.environ['paste.testing'] = True
         req.environ['paste.testing_variables'] = {}
         app = lint.middleware(self.app)
-        old_stdout = sys.stdout
-        out = CaptureStdout(old_stdout)
-        try:
-            sys.stdout = out
-            start_time = time.time()
-            ## FIXME: should it be an option to not catch exc_info?
-            res = req.get_response(app, catch_exc_info=True)
-            res._use_unicode = self.use_unicode
-            end_time = time.time()
-        finally:
-            sys.stdout = old_stdout
+        ## FIXME: should it be an option to not catch exc_info?
+        res = req.get_response(app, catch_exc_info=True)
+        res._use_unicode = self.use_unicode
         res.request = req
         res.app = app
         res.test_app = self
@@ -1063,7 +1093,6 @@ class TestApp(object):
         except TypeError:
             pass
         res.errors = errors.getvalue()
-        total_time = end_time - start_time
         for name, value in req.environ['paste.testing_variables'].items():
             if hasattr(res, name):
                 raise ValueError(
@@ -1098,26 +1127,26 @@ class TestApp(object):
         if isinstance(status, (list, tuple)):
             if res.status_int not in status:
                 raise AppError(
-                    "Bad response: %s (not one of %s for %s)\n%s"
-                    % (res_status, ', '.join(map(str, status)),
-                       res.request.url, res.body))
+                    "Bad response: %s (not one of %s for %s)\n%s",
+                    res_status, ', '.join(map(str, status)),
+                    res.request.url, res)
             return
         if status is None:
             if res.status_int >= 200 and res.status_int < 400:
                 return
             raise AppError(
-                "Bad response: %s (not 200 OK or 3xx redirect for %s)\n%s"
-                % (res_status, res.request.url,
-                   res.body))
+                "Bad response: %s (not 200 OK or 3xx redirect for %s)\n%s",
+                res_status, res.request.url,
+                res)
         if status != res.status_int:
             raise AppError(
-                "Bad response: %s (not %s)" % (res_status, status))
+                "Bad response: %s (not %s)", res_status, status)
 
     def _check_errors(self, res):
         errors = res.errors
         if errors:
             raise AppError(
-                "Application had errors logged:\n%s" % errors)
+                "Application had errors logged:\n%s", errors)
 
 
 ########################################
@@ -1141,6 +1170,12 @@ def _parse_attrs(text):
         # supported now (actually they have never been supported).
         attrs[str(attr_name)] = attr_body
     return attrs
+
+
+class Upload(object):
+    def __init__(self, filename, file_content=None):
+        self.filename = filename
+        self.file_content = file_content
 
 
 class Field(object):
@@ -1458,7 +1493,7 @@ class Form(object):
     def _parse_fields(self):
         in_select = None
         in_textarea = None
-        fields = {}
+        fields = OrderedDict()
         for match in self._tag_re.finditer(self.text):
             end = match.group(1) == '/'
             tag = match.group(2).lower()
@@ -1644,9 +1679,9 @@ class Form(object):
         Returns a :class:`webtest.TestResponse` object.
         """
         fields = self.submit_fields(name, index=index)
-        uploads = self.upload_fields()
-        if uploads:
-            args["upload_files"] = uploads
+        #uploads = self.upload_fields()
+        #if uploads:
+        #    args["upload_files"] = uploads
         if self.method != "GET":
             args.setdefault("content_type",  self.enctype)
         return self.response.goto(self.action, method=self.method,
@@ -1683,8 +1718,7 @@ class Form(object):
                 if value is None:
                     continue
                 if isinstance(field, File):
-                    # skip file uploads; they need to be accounted
-                    # for differently
+                    submit.append((name, field))
                     continue
                 if isinstance(value, list):
                     for item in value:
@@ -1768,7 +1802,10 @@ def html_unquote(v):
         v = v.replace(ent, repl)
     return v
 
+
 def encode_params(params, content_type):
+    if params is NoDefault:
+        return ''
     if isinstance(params, dict) or hasattr(params, 'items'):
         params = list(params.items())
     if isinstance(params, (list, tuple)):

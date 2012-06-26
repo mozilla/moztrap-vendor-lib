@@ -17,6 +17,7 @@ import time
 
 from webob.compat import (
     integer_types,
+    long,
     native_,
     text_type,
     )
@@ -109,7 +110,7 @@ def parse_date_delta(value):
 
 
 def serialize_date_delta(value):
-    if isinstance(value, (float, int)):
+    if isinstance(value, (float, int, long)):
         return str(int(value))
     else:
         return serialize_date(value)
