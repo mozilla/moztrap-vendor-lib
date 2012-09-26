@@ -2,12 +2,10 @@
 # Original author: Andrew Godwin
 # Patches by: F. Gabriel Gosselin <gabrielNOSPAM@evidens.ca>
 
-from django.db import connection
-from django.conf import settings
 from south.db import generic
 from south.db.generic import DryRunError, INVALID
-
 from south.logger import get_logger
+
 
 def delete_column_constraints(func):
     """
@@ -19,7 +17,7 @@ def delete_column_constraints(func):
         try:
             self.delete_foreign_key(table_name, column_name)
         except ValueError:
-            pass # If no foreign key on column, OK because it checks first
+            pass  # If no foreign key on column, OK because it checks first
         # Delete constraints referring to this column
         try:
             reverse = self._lookup_reverse_constraint(table_name, column_name)
@@ -29,6 +27,7 @@ def delete_column_constraints(func):
             pass
         return func(self, table_name, column_name, *args, **opts)
     return _column_rm
+
 
 def copy_column_constraints(func):
     """
@@ -46,7 +45,7 @@ def copy_column_constraints(func):
                 get_logger().debug("Foreign key SQL: " + fk_sql)
                 self.add_deferred_sql(fk_sql)
         except IndexError:
-            pass # No constraint exists so ignore
+            pass  # No constraint exists so ignore
         except DryRunError:
             pass
         # Copy constraints referring to this column
@@ -60,6 +59,7 @@ def copy_column_constraints(func):
             pass
         return func(self, table_name, column_old, column_new, *args, **opts)
     return _column_cp
+
 
 def invalidate_table_constraints(func):
     """
@@ -78,6 +78,7 @@ def invalidate_table_constraints(func):
         return func(self, table, *args, **opts)
     return _cache_clear
 
+
 class DatabaseOperations(generic.DatabaseOperations):
     """
     MySQL implementation of database operations.
@@ -93,14 +94,14 @@ class DatabaseOperations(generic.DatabaseOperations):
     drop_index_string = 'DROP INDEX %(index_name)s ON %(table_name)s'
     delete_primary_key_sql = "ALTER TABLE %(table)s DROP PRIMARY KEY"
     delete_foreign_key_sql = "ALTER TABLE %(table)s DROP FOREIGN KEY %(constraint)s"
-    allows_combined_alters = False
-    has_ddl_transactions = False
-    has_check_constraints = False
     delete_unique_sql = "ALTER TABLE %s DROP INDEX %s"
     rename_table_sql = "RENAME TABLE %s TO %s;"
 
+    allows_combined_alters = False
+    has_check_constraints = False
+
     geom_types = ['geometry', 'point', 'linestring', 'polygon']
-    text_types = ['text', 'blob',]
+    text_types = ['text', 'blob']
 
     def __init__(self, db_alias):
         self._constraint_references = {}
@@ -251,7 +252,7 @@ class DatabaseOperations(generic.DatabaseOperations):
                 return [(y, tuple(y)) for x, y in table.items()]
             else:
                 return tuple(table[column_name])
-        except KeyError, e:
+        except KeyError:
             return []
 
     def _field_sanity(self, field):
@@ -260,8 +261,8 @@ class DatabaseOperations(generic.DatabaseOperations):
         """
         #  MySQL does not support defaults for geometry columns also
         type = self._db_type_for_alter_column(field).lower()
-        is_geom = True in [ type.find(t) > -1 for t in self.geom_types ]
-        is_text = True in [ type.find(t) > -1 for t in self.text_types ]
+        is_geom = True in [type.find(t) > -1 for t in self.geom_types]
+        is_text = True in [type.find(t) > -1 for t in self.text_types]
 
         if is_geom or is_text:
             field._suppress_default = True
@@ -273,8 +274,7 @@ class DatabaseOperations(generic.DatabaseOperations):
         """
         type = params['type']
         #  MySQL does not support defaults for geometry columns also
-        is_geom = True in [ type.find(t) > -1 for t in self.geom_types ]
-        is_text = True in [ type.find(t) > -1 for t in self.text_types ]
+        is_geom = True in [type.find(t) > -1 for t in self.geom_types]
+        is_text = True in [type.find(t) > -1 for t in self.text_types]
         if not is_geom and not is_text:
             super(DatabaseOperations, self)._alter_set_defaults(field, name, params, sqls)
-

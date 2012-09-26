@@ -5,6 +5,8 @@ from django.db.models import fields
 from south.db import generic
 from south.db.generic import delete_column_constraints, invalidate_table_constraints, copy_column_constraints
 from south.exceptions import ConstraintDropped
+from django.utils.encoding import smart_unicode
+from django.core.management.color import no_style
 
 class DatabaseOperations(generic.DatabaseOperations):
     """
@@ -32,6 +34,8 @@ class DatabaseOperations(generic.DatabaseOperations):
     
     
     default_schema_name = "dbo"
+    
+    has_booleans = False
 
 
     @delete_column_constraints
@@ -166,6 +170,11 @@ class DatabaseOperations(generic.DatabaseOperations):
             sch = qn(self._get_schema_name())
             tab = qn(table_name)
             table = ".".join([sch, tab])
+            try:
+                self.delete_foreign_key(table_name, name)
+            except ValueError:
+                # no FK constraint on this field. That's OK.
+                pass
             constraints = self._find_constraints_for_column(table_name, name, False)
             for constraint in constraints.keys():
                 params = dict(table_name = table,
@@ -176,18 +185,12 @@ class DatabaseOperations(generic.DatabaseOperations):
         ret_val = super(DatabaseOperations, self).alter_column(table_name, name, field, explicit_name, ignore_constraints=True)
         
         if not ignore_constraints:
-            unique_field_handled = False
             for cname, (ctype,args) in constraints.items():
                 params = dict(table = table,
                               constraint = qn(cname))
                 if ctype=='UNIQUE':
-                    if len(args)==1:
-                        unique_field_handled = True # 
-                    if len(args)>1 or field.unique:
-                        params['columns'] = ", ".join(map(qn,args))
-                        sql = self.create_unique_sql % params
-                    else:
-                        continue
+                    params['columns'] = ", ".join(map(qn,args))
+                    sql = self.create_unique_sql % params
                 elif ctype=='PRIMARY KEY':
                     params['columns'] = ", ".join(map(qn,args))
                     sql = self.create_primary_key_string % params
@@ -207,9 +210,6 @@ class DatabaseOperations(generic.DatabaseOperations):
                 else:
                     raise NotImplementedError("Don't know how to handle constraints of type "+ type)                    
                 self.execute(sql, [])
-            # Create unique constraint if necessary
-            if field.unique and not unique_field_handled:
-                self.create_unique(table_name, (name,))
             # Create foreign key if necessary
             if field.rel and self.supports_foreign_keys:
                 self.execute(
@@ -220,6 +220,9 @@ class DatabaseOperations(generic.DatabaseOperations):
                         field.rel.to._meta.get_field(field.rel.field_name).column
                     )
                 )
+                model = self.mock_model("FakeModelForIndexCreation", table_name)
+                for stmt in self._get_connection().creation.sql_indexes_for_field(model, field, no_style()):
+                    self.execute(stmt)
 
 
         return ret_val
@@ -251,7 +254,12 @@ class DatabaseOperations(generic.DatabaseOperations):
         else:
             #TODO: Anybody else needs special translations?
             return str(value) 
-
+    def _default_value_workaround(self, value):
+        if isinstance(value, (date,time,datetime)):
+            return value.isoformat()
+        else:
+            return super(DatabaseOperations, self)._default_value_workaround(value)
+        
     def _quote_string(self, s):
         return "'" + s.replace("'","''") + "'"
     
@@ -395,8 +403,11 @@ class DatabaseOperations(generic.DatabaseOperations):
         params = (self.quote_name(old_table_name), self.quote_name(table_name))
         self.execute('EXEC sp_rename %s, %s' % params)
 
-    _db_type_for_alter_column = generic.alias("_db_positive_type_for_alter_column")
-    _alter_add_column_mods = generic.alias("_alter_add_positive_check")
+    def _db_type_for_alter_column(self, field): 
+        return self._db_positive_type_for_alter_column(DatabaseOperations, field)
+
+    def _alter_add_column_mods(self, field, name, params, sqls):
+        return self._alter_add_positive_check(DatabaseOperations, field, name, params, sqls)
 
     @invalidate_table_constraints
     def delete_foreign_key(self, table_name, column):
@@ -418,6 +429,6 @@ class DatabaseOperations(generic.DatabaseOperations):
         schema = self._get_schema_name()
         indexes = self.execute(find_index_sql, [schema, table_name, column])
         qn = self.quote_name
-        for index in (i[0] for i in indexes):
+        for index in (i[0] for i in indexes if i[0]): # "if i[0]" added because an empty name may return
             self.execute("DROP INDEX %s on %s.%s" % (qn(index), qn(schema), qn(table_name) ))
             

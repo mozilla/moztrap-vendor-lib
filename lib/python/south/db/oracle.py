@@ -38,6 +38,7 @@ class DatabaseOperations(generic.DatabaseOperations):
     add_constraint_string =     'ALTER TABLE %(table_name)s ADD CONSTRAINT %(constraint)s %(clause)s'
 
     allows_combined_alters = False
+    has_booleans = False
     
     constraints_dict = {
         'P': 'PRIMARY KEY',
@@ -52,11 +53,11 @@ class DatabaseOperations(generic.DatabaseOperations):
         else:
             return original_get_sequence_name(table_name)
 
+    #TODO: This will cause very obscure bugs if anyone uses a column name or string value
+    #      that looks like a column definition (with 'CHECK', 'DEFAULT' and/or 'NULL' in it)
+    #      e.g. "CHECK MATE" varchar(10) DEFAULT 'NULL'
     def adj_column_sql(self, col):
-        # Fix boolean field values: need to be 1/0, not True/False
-        col = re.sub('DEFAULT True', 'DEFAULT 1', col)
-        col = re.sub('DEFAULT False', 'DEFAULT 0', col)
-        # Fix other things
+        # Syntax fixes -- Oracle is picky about clause order
         col = re.sub('(?P<constr>CHECK \(.*\))(?P<any>.*)(?P<default>DEFAULT \d+)', 
                      lambda mo: '%s %s%s'%(mo.group('default'), mo.group('constr'), mo.group('any')), col) #syntax fix for boolean/integer field only
         col = re.sub('(?P<not_null>(NOT )?NULL) (?P<misc>(.* )?)(?P<default>DEFAULT.+)',
@@ -123,6 +124,12 @@ END;
 
     @generic.invalidate_table_constraints
     def alter_column(self, table_name, name, field, explicit_name=True):
+        
+        if self.dry_run:
+            if self.debug:
+                print '   - no dry run output for alter_column() due to dynamic DDL, sorry'
+            return
+
         qn = self.quote_name(table_name)
 
         # hook for the field to do any resolution prior to it's attributes being queried
@@ -150,19 +157,12 @@ END;
             params['nullity'] = 'NULL'
 
         if not field.null and field.has_default():
-            params['default'] = field.get_default()
+            params['default'] = self._default_value_workaround(field.get_default())
 
         sql_templates = [
             (self.alter_string_set_type, params),
             (self.alter_string_set_default, params.copy()),
         ]
-
-        # UNIQUE constraint
-        unique_constraint = list(self._constraints_affecting_columns(table_name, [name], 'UNIQUE'))
-        if field.unique and not unique_constraint:
-            self.create_unique(table_name, [name])
-        elif not field.unique and unique_constraint:
-            self.delete_unique(table_name, [name])
 
         # drop CHECK constraints. Make sure this is executed before the ALTER TABLE statements
         # generated above, since those statements recreate the constraints we delete here.
@@ -184,10 +184,40 @@ END;
                     params['nullity'] = ''
                     sql = sql_template % params
                     self.execute(sql)
+                # Oracle also has issues if we try to change a regular column
+                # to a LOB or vice versa (also REF, object, VARRAY or nested
+                # table, but these don't come up much in Django apps)
+                elif 'ORA-22858' in description or 'ORA-22859' in description:
+                    self._alter_column_lob_workaround(table_name, name, field)
                 else:
                     raise
 
-    @generic.copy_column_constraints
+    def _alter_column_lob_workaround(self, table_name, name, field):
+        """
+        Oracle refuses to change a column type from/to LOB to/from a regular
+        column. In Django, this shows up when the field is changed from/to
+        a TextField.
+        What we need to do instead is:
+        - Rename the original column
+        - Add the desired field as new
+        - Update the table to transfer values from old to new
+        - Drop old column
+        """
+        renamed = self._generate_temp_name(name)
+        self.rename_column(table_name, name, renamed)
+        self.add_column(table_name, name, field, keep_default=False)
+        self.execute("UPDATE %s set %s=%s" % (
+            self.quote_name(table_name),
+            self.quote_name(name),
+            self.quote_name(renamed),
+        ))
+        self.delete_column(table_name, renamed)
+
+    def _generate_temp_name(self, for_name):
+        suffix = hex(hash(for_name)).upper()[1:]
+        return self.normalize_name(for_name + "_" + suffix)
+    
+    @generic.copy_column_constraints #TODO: Appears to be nulled by the delete decorator below...
     @generic.delete_column_constraints
     def rename_column(self, table_name, old, new):
         if old == new:
@@ -240,6 +270,13 @@ END;
         if isinstance(field, models.BooleanField) and field.has_default():
             field.default = int(field.to_python(field.get_default()))
         return field
+
+    def _default_value_workaround(self, value):
+        from datetime import date,time,datetime
+        if isinstance(value, (date,time,datetime)):
+            return "'%s'" % value
+        else:
+            return super(DatabaseOperations, self)._default_value_workaround(value)
 
     def _fill_constraint_cache(self, db_name, table_name):
         self._constraint_cache.setdefault(db_name, {}) 
