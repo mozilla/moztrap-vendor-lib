@@ -12,6 +12,9 @@ Available hooks:
     A dictionary of the arguments being sent to Request().
 
 ``pre_request``:
+    The Request object, directly after being created.
+
+``pre_send``:
     The Request object, directly before being sent.
 
 ``post_request``:
@@ -22,7 +25,8 @@ Available hooks:
 
 """
 
-import warnings
+
+HOOKS = ('args', 'pre_request', 'pre_send', 'post_request', 'response')
 
 
 def dispatch_hook(key, hooks, hook_data):
@@ -31,10 +35,15 @@ def dispatch_hook(key, hooks, hook_data):
     hooks = hooks or dict()
 
     if key in hooks:
-        try:
-            return hooks.get(key).__call__(hook_data) or hook_data
+        hooks = hooks.get(key)
 
-        except Exception, why:
-            warnings.warn(str(why))
+        if hasattr(hooks, '__call__'):
+            hooks = [hooks]
+
+        for hook in hooks:
+            _hook_data = hook(hook_data)
+            if _hook_data is not None:
+                hook_data = _hook_data
+
 
     return hook_data

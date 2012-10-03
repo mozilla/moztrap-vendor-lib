@@ -1,11 +1,13 @@
 # urllib3/request.py
-# Copyright 2008-2011 Andrey Petrov and contributors (see CONTRIBUTORS.txt)
+# Copyright 2008-2012 Andrey Petrov and contributors (see CONTRIBUTORS.txt)
 #
 # This module is part of urllib3 and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
-
-from urllib import urlencode
+try:
+    from urllib.parse import urlencode
+except ImportError:
+    from urllib import urlencode
 
 from .filepost import encode_multipart_formdata
 
@@ -42,7 +44,7 @@ class RequestMethods(object):
 
     def urlopen(self, method, url, body=None, headers=None,
                 encode_multipart=True, multipart_boundary=None,
-                **kw):
+                **kw): # Abstract
         raise NotImplemented("Classes extending RequestMethods must implement "
                              "their own ``urlopen`` method.")
 
@@ -124,22 +126,3 @@ class RequestMethods(object):
 
         return self.urlopen(method, url, body=body, headers=headers,
                             **urlopen_kw)
-
-    # Deprecated:
-
-    def get_url(self, url, fields=None, **urlopen_kw):
-        """
-        .. deprecated:: 1.0
-           Use :meth:`request` instead.
-        """
-        return self.request_encode_url('GET', url, fields=fields,
-                                       **urlopen_kw)
-
-    def post_url(self, url, fields=None, headers=None, **urlopen_kw):
-        """
-        .. deprecated:: 1.0
-           Use :meth:`request` instead.
-        """
-        return self.request_encode_body('POST', url, fields=fields,
-                                        headers=headers,
-                                        **urlopen_kw)

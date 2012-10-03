@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
-import urlparse
+
+try:
+    import urlparse
+except ImportError: #python 3
+    from urllib import parse as urlparse
+
 from webtest import TestResponse
 from django.test import Client
+from django.http import SimpleCookie
 
 class DjangoWebtestResponse(TestResponse):
     """
@@ -24,7 +30,11 @@ class DjangoWebtestResponse(TestResponse):
 
     @property
     def client(self):
-        return Client()
+        client = Client()
+        client.cookies = SimpleCookie()
+        for k,v in self.test_app.cookies.items():
+            client.cookies[k] = v
+        return client
 
     def __getitem__(self, item):
         if item != 'Location':

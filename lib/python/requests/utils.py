@@ -11,14 +11,100 @@ that are also useful for external consumption.
 
 import cgi
 import codecs
-import cookielib
 import os
-import random
+import platform
 import re
+import sys
 import zlib
-import urllib
+from netrc import netrc, NetrcParseError
 
-from urllib2 import parse_http_list as _parse_list_header
+from . import __version__
+from .compat import parse_http_list as _parse_list_header
+from .compat import quote, urlparse, basestring, bytes, str, OrderedDict
+from .cookies import RequestsCookieJar, cookiejar_from_dict
+
+_hush_pyflakes = (RequestsCookieJar,)
+
+CERTIFI_BUNDLE_PATH = None
+try:
+    # see if requests's own CA certificate bundle is installed
+    from . import certs
+    CERTIFI_BUNDLE_PATH = certs.where()
+except ImportError:
+    pass
+
+NETRC_FILES = ('.netrc', '_netrc')
+
+# common paths for the OS's CA certificate bundle
+POSSIBLE_CA_BUNDLE_PATHS = [
+        # Red Hat, CentOS, Fedora and friends (provided by the ca-certificates package):
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        # Ubuntu, Debian, and friends (provided by the ca-certificates package):
+        '/etc/ssl/certs/ca-certificates.crt',
+        # FreeBSD (provided by the ca_root_nss package):
+        '/usr/local/share/certs/ca-root-nss.crt',
+        # openSUSE (provided by the ca-certificates package), the 'certs' directory is the
+        # preferred way but may not be supported by the SSL module, thus it has 'ca-bundle.pem'
+        # as a fallback (which is generated from pem files in the 'certs' directory):
+        '/etc/ssl/ca-bundle.pem',
+]
+
+
+def get_os_ca_bundle_path():
+    """Try to pick an available CA certificate bundle provided by the OS."""
+    for path in POSSIBLE_CA_BUNDLE_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
+
+# if certifi is installed, use its CA bundle;
+# otherwise, try and use the OS bundle
+DEFAULT_CA_BUNDLE_PATH = CERTIFI_BUNDLE_PATH or get_os_ca_bundle_path()
+
+
+def dict_to_sequence(d):
+    """Returns an internal sequence dictionary update."""
+
+    if hasattr(d, 'items'):
+        d = d.items()
+
+    return d
+
+
+def get_netrc_auth(url):
+    """Returns the Requests tuple auth for a given url from netrc."""
+
+    try:
+        locations = (os.path.expanduser('~/{0}'.format(f)) for f in NETRC_FILES)
+        netrc_path = None
+
+        for loc in locations:
+            if os.path.exists(loc) and not netrc_path:
+                netrc_path = loc
+
+        # Abort early if there isn't one.
+        if netrc_path is None:
+            return netrc_path
+
+        ri = urlparse(url)
+
+        # Strip port numbers from netloc
+        host = ri.netloc.split(':')[0]
+
+        try:
+            _netrc = netrc(netrc_path).authenticators(host)
+            if _netrc:
+                # Return with login / password
+                login_i = (0 if _netrc[0] else 1)
+                return (_netrc[login_i], _netrc[2])
+        except (NetrcParseError, IOError):
+            # If there was a parsing error or a permissions issue reading the file,
+            # we'll just skip netrc auth
+            pass
+
+    # AppEngine hackiness.
+    except (ImportError, AttributeError):
+        pass
 
 
 def guess_filename(obj):
@@ -26,6 +112,55 @@ def guess_filename(obj):
     name = getattr(obj, 'name', None)
     if name and name[0] != '<' and name[-1] != '>':
         return name
+
+
+def from_key_val_list(value):
+    """Take an object and test to see if it can be represented as a
+    dictionary. Unless it can not be represented as such, return an
+    OrderedDict, e.g.,
+
+    ::
+
+        >>> from_key_val_list([('key', 'val')])
+        OrderedDict([('key', 'val')])
+        >>> from_key_val_list('string')
+        ValueError: need more than 1 value to unpack
+        >>> from_key_val_list({'key': 'val'})
+        OrderedDict([('key', 'val')])
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, (str, bytes, bool, int)):
+        raise ValueError('cannot encode objects that are not 2-tuples')
+
+    return OrderedDict(value)
+
+
+def to_key_val_list(value):
+    """Take an object and test to see if it can be represented as a
+    dictionary. If it can be, return a list of tuples, e.g.,
+
+    ::
+
+        >>> to_key_val_list([('key', 'val')])
+        [('key', 'val')]
+        >>> to_key_val_list({'key': 'val'})
+        [('key', 'val')]
+        >>> to_key_val_list('string')
+        ValueError: cannot encode objects that are not 2-tuples.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, (str, bytes, bool, int)):
+        raise ValueError('cannot encode objects that are not 2-tuples')
+
+    if isinstance(value, dict):
+        value = value.items()
+
+    return list(value)
+
 
 # From mitsuhiko/werkzeug (used with permission).
 def parse_list_header(value):
@@ -132,16 +267,22 @@ def header_expand(headers):
     collector = []
 
     if isinstance(headers, dict):
-        headers = headers.items()
-
+        headers = list(headers.items())
     elif isinstance(headers, basestring):
+        return headers
+    elif isinstance(headers, str):
+        # As discussed in https://github.com/kennethreitz/requests/issues/400
+        # latin-1 is the most conservative encoding used on the web. Anyone
+        # who needs more can encode to a byte-string before calling
+        return headers.encode("latin-1")
+    elif headers is None:
         return headers
 
     for i, (value, params) in enumerate(headers):
 
         _params = []
 
-        for (p_k, p_v) in params.items():
+        for (p_k, p_v) in list(params.items()):
 
             _params.append('%s=%s' % (p_k, p_v))
 
@@ -152,31 +293,14 @@ def header_expand(headers):
 
             collector.append('; '.join(_params))
 
-            if not len(headers) == i+1:
+            if not len(headers) == i + 1:
                 collector.append(', ')
-
 
     # Remove trailing separators.
     if collector[-1] in (', ', '; '):
         del collector[-1]
 
     return ''.join(collector)
-
-
-
-def randombytes(n):
-    """Return n random bytes."""
-    # Use /dev/urandom if it is available.  Fall back to random module
-    # if not.  It might be worthwhile to extend this function to use
-    # other platform-specific mechanisms for getting random bytes.
-    if os.path.exists("/dev/urandom"):
-        f = open("/dev/urandom")
-        s = f.read(n)
-        f.close()
-        return s
-    else:
-        L = [chr(random.randrange(0, 256)) for i in range(n)]
-        return "".join(L)
 
 
 def dict_from_cookiejar(cj):
@@ -187,31 +311,10 @@ def dict_from_cookiejar(cj):
 
     cookie_dict = {}
 
-    for _, cookies in cj._cookies.items():
-        for _, cookies in cookies.items():
-            for cookie in cookies.values():
-                # print cookie
-                cookie_dict[cookie.name] = cookie.value
+    for cookie in cj:
+        cookie_dict[cookie.name] = cookie.value
 
     return cookie_dict
-
-
-def cookiejar_from_dict(cookie_dict):
-    """Returns a CookieJar from a key/value dictionary.
-
-    :param cookie_dict: Dict of key/values to insert into CookieJar.
-    """
-
-    # return cookiejar if one was passed in
-    if isinstance(cookie_dict, cookielib.CookieJar):
-        return cookie_dict
-
-    # create cookiejar
-    cj = cookielib.CookieJar()
-
-    cj = add_dict_to_cookiejar(cj, cookie_dict)
-
-    return cj
 
 
 def add_dict_to_cookiejar(cj, cookie_dict):
@@ -221,31 +324,9 @@ def add_dict_to_cookiejar(cj, cookie_dict):
     :param cookie_dict: Dict of key/values to insert into CookieJar.
     """
 
-    for k, v in cookie_dict.items():
-
-        cookie = cookielib.Cookie(
-            version=0,
-            name=k,
-            value=v,
-            port=None,
-            port_specified=False,
-            domain='',
-            domain_specified=False,
-            domain_initial_dot=False,
-            path='/',
-            path_specified=True,
-            secure=False,
-            expires=None,
-            discard=True,
-            comment=None,
-            comment_url=None,
-            rest={'HttpOnly': None},
-            rfc2109=False
-        )
-
-        # add cookie to cookiejar
+    cj2 = cookiejar_from_dict(cookie_dict)
+    for cookie in cj2:
         cj.set_cookie(cookie)
-
     return cj
 
 
@@ -276,22 +357,8 @@ def get_encoding_from_headers(headers):
     if 'charset' in params:
         return params['charset'].strip("'\"")
 
-
-def unicode_from_html(content):
-    """Attempts to decode an HTML string into unicode.
-    If unsuccessful, the original content is returned.
-    """
-
-    encodings = get_encodings_from_content(content)
-
-    for encoding in encodings:
-
-        try:
-            return unicode(content, encoding)
-        except (UnicodeError, TypeError):
-            pass
-
-        return content
+    if 'text' in content_type:
+        return 'ISO-8859-1'
 
 
 def stream_decode_response_unicode(iterator, r):
@@ -311,6 +378,12 @@ def stream_decode_response_unicode(iterator, r):
     if rv:
         yield rv
 
+def iter_slices(string, slice_length):
+    """Iterate over slices of a string."""
+    pos = 0
+    while pos < len(string):
+        yield string[pos:pos+slice_length]
+        pos += slice_length
 
 def get_unicode_from_response(r):
     """Returns the requested content back in unicode.
@@ -334,24 +407,15 @@ def get_unicode_from_response(r):
 
     if encoding:
         try:
-            return unicode(r.content, encoding)
+            return str(r.content, encoding)
         except UnicodeError:
             tried_encodings.append(encoding)
 
     # Fall back:
     try:
-        return unicode(r.content, encoding, errors='replace')
+        return str(r.content, encoding, errors='replace')
     except TypeError:
         return r.content
-
-
-def decode_gzip(content):
-    """Return gzip-decoded string.
-
-    :param content: bytestring to gzip-decode.
-    """
-
-    return zlib.decompress(content, 16 + zlib.MAX_WBITS)
 
 
 def stream_decompress(iterator, mode='gzip'):
@@ -381,18 +445,133 @@ def stream_decompress(iterator, mode='gzip'):
             yield chunk
     else:
         # Make sure everything has been returned from the decompression object
-        buf = dec.decompress('')
+        buf = dec.decompress(bytes())
         rv = buf + dec.flush()
         if rv:
             yield rv
 
 
-def requote_path(path):
-    """Re-quote the given URL path component.
+def stream_untransfer(gen, resp):
+    if 'gzip' in resp.headers.get('content-encoding', ''):
+        gen = stream_decompress(gen, mode='gzip')
+    elif 'deflate' in resp.headers.get('content-encoding', ''):
+        gen = stream_decompress(gen, mode='deflate')
 
-    This function passes the given path through an unquote/quote cycle to
+    return gen
+
+
+# The unreserved URI characters (RFC 3986)
+UNRESERVED_SET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    + "0123456789-._~")
+
+
+def unquote_unreserved(uri):
+    """Un-escape any percent-escape sequences in a URI that are unreserved
+    characters. This leaves all reserved, illegal and non-ASCII bytes encoded.
+    """
+    try:
+        parts = uri.split('%')
+        for i in range(1, len(parts)):
+            h = parts[i][0:2]
+            if len(h) == 2 and h.isalnum():
+                c = chr(int(h, 16))
+                if c in UNRESERVED_SET:
+                    parts[i] = c + parts[i][2:]
+                else:
+                    parts[i] = '%' + parts[i]
+            else:
+                parts[i] = '%' + parts[i]
+        return ''.join(parts)
+    except ValueError:
+        return uri
+
+
+def requote_uri(uri):
+    """Re-quote the given URI.
+
+    This function passes the given URI through an unquote/quote cycle to
     ensure that it is fully and consistently quoted.
     """
-    parts = path.split("/")
-    parts = (urllib.quote(urllib.unquote(part), safe="") for part in parts)
-    return "/".join(parts)
+    # Unquote only the unreserved characters
+    # Then quote only illegal characters (do not quote reserved, unreserved,
+    # or '%')
+    return quote(unquote_unreserved(uri), safe="!#$%&'()*+,/:;=?@[]~")
+
+
+def get_environ_proxies():
+    """Return a dict of environment proxies."""
+
+    proxy_keys = [
+        'all',
+        'http',
+        'https',
+        'ftp',
+        'socks',
+        'no'
+    ]
+
+    get_proxy = lambda k: os.environ.get(k) or os.environ.get(k.upper())
+    proxies = [(key, get_proxy(key + '_proxy')) for key in proxy_keys]
+    return dict([(key, val) for (key, val) in proxies if val])
+
+
+def default_user_agent():
+    """Return a string representing the default user agent."""
+    _implementation = platform.python_implementation()
+
+    if _implementation == 'CPython':
+        _implementation_version = platform.python_version()
+    elif _implementation == 'PyPy':
+        _implementation_version = '%s.%s.%s' % (
+                                                sys.pypy_version_info.major,
+                                                sys.pypy_version_info.minor,
+                                                sys.pypy_version_info.micro
+                                            )
+        if sys.pypy_version_info.releaselevel != 'final':
+            _implementation_version = ''.join([_implementation_version, sys.pypy_version_info.releaselevel])
+    elif _implementation == 'Jython':
+        _implementation_version = platform.python_version()  # Complete Guess
+    elif _implementation == 'IronPython':
+        _implementation_version = platform.python_version()  # Complete Guess
+    else:
+        _implementation_version = 'Unknown'
+
+    return " ".join([
+            'python-requests/%s' % __version__,
+            '%s/%s' % (_implementation, _implementation_version),
+            '%s/%s' % (platform.system(), platform.release()),
+        ])
+
+def parse_header_links(value):
+    """Return a dict of parsed link headers proxies.
+
+    i.e. Link: <http:/.../front.jpeg>; rel=front; type="image/jpeg",<http://.../back.jpeg>; rel=back;type="image/jpeg"
+
+    """
+
+    links = []
+
+    replace_chars = " '\""
+
+    for val in value.split(","):
+        try:
+            url, params = val.split(";", 1)
+        except ValueError:
+            url, params = val, ''
+
+        link = {}
+
+        link["url"] = url.strip("<> '\"")
+
+        for param in params.split(";"):
+            try:
+                key,value = param.split("=")
+            except ValueError:
+                break
+
+            link[key.strip(replace_chars)] = value.strip(replace_chars)
+
+        links.append(link)
+
+    return links

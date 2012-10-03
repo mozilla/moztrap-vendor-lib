@@ -1,3 +1,8 @@
+"""
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at http://mozilla.org/MPL/2.0/.
+"""
 import base64
 import hashlib
 import logging
@@ -9,6 +14,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils.importlib import import_module
 
 from django_browserid.base import get_audience as base_get_audience, verify
+from django_browserid.signals import user_created
+
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +37,7 @@ def default_username_algo(email):
 
 class BrowserIDBackend(object):
     supports_anonymous_user = False
+    supports_inactive_user = True
     supports_object_permissions = False
 
     def verify(self, *args):
@@ -64,7 +72,7 @@ class BrowserIDBackend(object):
         See django_browserid.base.get_audience()
         """
         result = verify(assertion, audience)
-        if result is None:
+        if not result:
             return None
 
         email = result['email']
@@ -78,14 +86,19 @@ class BrowserIDBackend(object):
         if len(users) == 1:
             return users[0]
 
-        create_user = getattr(settings, 'BROWSERID_CREATE_USER', False)
+        create_user = getattr(settings, 'BROWSERID_CREATE_USER', True)
         if not create_user:
             return None
-        elif create_user == True:
-            return self.create_user(email)
         else:
-            # Find the function to call, call it and throw in the email.
-            return self._load_module(create_user)(email)
+            if create_user == True:
+                create_function = self.create_user
+            else:
+                # Find the function to call.
+                create_function = self._load_module(create_user)
+
+            user = create_function(email)
+            user_created.send(create_function, user=user)
+            return user
 
     def get_user(self, user_id):
         try:
@@ -101,10 +114,10 @@ class BrowserIDBackend(object):
 
         try:
             mod = import_module(module)
-        except ImportError, e:
+        except ImportError:
             raise ImproperlyConfigured('Error importing BROWSERID_CREATE_USER'
                                        ' function.')
-        except ValueError, e:
+        except ValueError:
             raise ImproperlyConfigured('Error importing BROWSERID_CREATE_USER'
                                        ' function. Is BROWSERID_CREATE_USER a'
                                        ' string?')

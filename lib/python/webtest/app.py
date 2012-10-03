@@ -202,7 +202,7 @@ class TestResponse(Response):
         You can use multiple criteria to essentially assert multiple
         aspects about the link, e.g., where the link's destination is.
         """
-        __tracebackhide__ = True
+        __tracebackhide__ = True # NOQA
         found_html, found_desc, found_attrs = self._find_element(
             tag='a', href_attr='href',
             href_extract=None,
@@ -220,7 +220,7 @@ class TestResponse(Response):
         This kind of button should look like
         ``<button onclick="...location.href='url'...">``.
         """
-        __tracebackhide__ = True
+        __tracebackhide__ = True # NOQA
         found_html, found_desc, found_attrs = self._find_element(
             tag='button', href_attr='onclick',
             href_extract=re.compile(r"location\.href='(.*?)'"),
@@ -456,10 +456,13 @@ class TestResponse(Response):
                    for n, v in self.headerlist
                    if n.lower() != 'content-length']
         headers.sort()
-        return 'Response: %s\n%s\n%s' % (
+        output = 'Response: %s\n%s\n%s' % (
             to_string(self.status),
             '\n'.join(['%s: %s' % (n, v) for n, v in headers]),
             simple_body)
+        if not PY3 and isinstance(output, text_type):
+            output = output.encode(self.charset or 'utf-8', 'replace')
+        return output
 
     def _normalize_header_name(self, name):
         name = name.replace('-', ' ').title().replace(' ', '-')
@@ -501,8 +504,12 @@ class TestResponse(Response):
         try:
             from BeautifulSoup import BeautifulSoup
         except ImportError:
-            raise ImportError(
-                "You must have BeautifulSoup installed to use response.html")
+            try:
+                from bs4 import BeautifulSoup # NOQA
+            except ImportError:
+                raise ImportError(
+                    "You must have BeautifulSoup installed to use "
+                    "response.html")
         soup = BeautifulSoup(self.testbody)
         return soup
 
@@ -528,7 +535,7 @@ class TestResponse(Response):
                 import ElementTree
             except ImportError:
                 try:
-                    from elementtree import ElementTree
+                    from elementtree import ElementTree # NOQA
                 except ImportError:
                     raise ImportError(
                         ("You must have ElementTree installed "
@@ -727,7 +734,7 @@ class TestApp(object):
         """
         environ = self._make_environ(extra_environ)
         # Hide from py.test:
-        __tracebackhide__ = True
+        __tracebackhide__ = True # NOQA
         url = str(url)
         url = self._remove_fragment(url)
         if params:
@@ -763,7 +770,7 @@ class TestApp(object):
             params = list(params.items())
 
         if isinstance(params, (list, tuple)):
-            inline_uploads = [v for (k,v) in params
+            inline_uploads = [v for (k, v) in params
                               if isinstance(v, (File, Upload))]
 
         if len(inline_uploads) > 0:
@@ -773,7 +780,8 @@ class TestApp(object):
         else:
             params = encode_params(params, content_type)
             if upload_files or \
-                (content_type and to_string(content_type).startswith('multipart')):
+                (content_type and \
+                 to_string(content_type).startswith('multipart')):
                 params = cgi.parse_qsl(params, keep_blank_values=True)
                 content_type, params = self.encode_multipart(
                     params, upload_files or ())
@@ -1067,16 +1075,22 @@ class TestApp(object):
         ``TestRequest.blank()``, which will be set on the request.
         These can be arguments like ``content_type``, ``accept``, etc.
         """
-        __tracebackhide__ = True
+        __tracebackhide__ = True # NOQA
         errors = StringIO()
         req.environ['wsgi.errors'] = errors
         script_name = req.environ.get('SCRIPT_NAME', '')
         if script_name and req.path_info.startswith(script_name):
             req.path_info = req.path_info[len(script_name):]
-        if self.cookies:
+        cookies = self.cookies or {}
+        cookies = list(cookies.items())
+        if 'Cookie' in req.headers:
+            req_cookies = [i.strip() for i in req.headers['Cookie'].split(';')]
+            req_cookies = [i.split('=') for i in req_cookies]
+            cookies.extend(req_cookies)
+        if cookies:
             cookie_header = ''.join([
                 '%s=%s; ' % (name, cookie_quote(value))
-                for name, value in self.cookies.items()])
+                for name, value in cookies])
             req.environ['HTTP_COOKIE'] = cookie_header
         req.environ['paste.testing'] = True
         req.environ['paste.testing_variables'] = {}
@@ -1116,7 +1130,7 @@ class TestApp(object):
         return res
 
     def _check_status(self, status, res):
-        __tracebackhide__ = True
+        __tracebackhide__ = True # NOQA
         if status == '*':
             return
         res_status = to_string(res.status)
@@ -1338,6 +1352,8 @@ class Radio(Select):
     """
 
     def value__get(self):
+        if self._forced_value is not NoValue:
+            self._forced_value = NoValue
         if self.selectedIndex is not None:
             return self.options[self.selectedIndex][0]
         else:
@@ -1682,7 +1698,7 @@ class Form(object):
         #uploads = self.upload_fields()
         #if uploads:
         #    args["upload_files"] = uploads
-        if self.method != "GET":
+        if self.method.upper() != "GET":
             args.setdefault("content_type",  self.enctype)
         return self.response.goto(self.action, method=self.method,
                                   params=fields, **args)

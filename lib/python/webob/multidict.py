@@ -32,7 +32,7 @@ class MultiDict(MutableMapping):
             if hasattr(args[0], 'iteritems'):
                 items = list(args[0].iteritems())
             elif hasattr(args[0], 'items'):
-                items = args[0].items()
+                items = list(args[0].items())
             else:
                 items = list(args[0])
             self._items = items
@@ -61,11 +61,15 @@ class MultiDict(MutableMapping):
         """
         obj = cls()
         # fs.list can be None when there's nothing to parse
-        if PY3: # pragma: no cover
-            decode = lambda b: b
-        else:
-            decode = lambda b: b.decode('utf8')
         for field in fs.list or ():
+            charset = field.type_options.get('charset', 'utf8')
+            if PY3: # pragma: no cover
+                if charset == 'utf8':
+                    decode = lambda b: b
+                else:
+                    decode = lambda b: b.encode('utf8').decode(charset)
+            else:
+                decode = lambda b: b.decode(charset)
             field.name = decode(field.name)
             if field.filename:
                 field.filename = decode(field.filename)
