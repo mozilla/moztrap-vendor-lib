@@ -83,6 +83,17 @@ class BaseDatabaseWrapper(object):
             return
         self.cursor().execute(self.ops.savepoint_commit_sql(sid))
 
+    def abort(self):
+        """
+        Roll back any ongoing transaction and clean the transaction state
+        stack.
+        """
+        if self._dirty:
+            self._rollback()
+            self._dirty = False
+        while self.transaction_state:
+            self.leave_transaction_management()
+
     def enter_transaction_management(self, managed=True):
         """
         Enters transaction management for a running thread. It must be balanced with
@@ -873,6 +884,12 @@ class BaseDatabaseOperations(object):
         """
         conn = ' %s ' % connector
         return conn.join(sub_expressions)
+
+    def modify_insert_params(self, placeholders, params):
+        """Allow modification of insert parameters. Needed for Oracle Spatial
+        backend due to #10888.
+        """
+        return params
 
 class BaseDatabaseIntrospection(object):
     """
