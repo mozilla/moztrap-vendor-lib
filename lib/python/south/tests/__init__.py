@@ -1,3 +1,4 @@
+from __future__ import print_function
 
 #import unittest
 import os
@@ -27,7 +28,23 @@ except AttributeError:
                     testfunc(self)
                 else:
                     # The skip exceptions are not available either...
-                    print "Skipping", testfunc.__name__,"--", message
+                    print("Skipping", testfunc.__name__,"--", message)
+            return wrapper
+        return decorator
+
+# ditto for skipIf
+try:
+    skipIf = unittest.skipIf #@UnusedVariable
+except AttributeError:
+    def skipIf(condition, message):
+        def decorator(testfunc):
+            @wraps(testfunc)
+            def wrapper(self):
+                if condition:
+                    print("Skipping", testfunc.__name__,"--", message)
+                else:
+                    # Apply method
+                    testfunc(self)
             return wrapper
         return decorator
 
@@ -63,6 +80,8 @@ class Monkeypatcher(unittest.TestCase):
         if hasattr(self, 'installed_apps'):
             hacks.store_app_cache_state()
             hacks.set_installed_apps(self.installed_apps)
+            # Make sure dependencies are calculated for new apps
+            Migrations._dependencies_done = False
 
     def tearDown(self):
         """
