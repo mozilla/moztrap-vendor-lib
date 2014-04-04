@@ -1,3 +1,4 @@
+
 """
     sphinxcontrib.autohttp.flask
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -11,46 +12,25 @@
 """
 
 import re
-try:
-    import cStringIO as StringIO
-except ImportError:
-    import StringIO
+import six
 
 from docutils import nodes
+from docutils.parsers.rst import directives
 from docutils.statemachine import ViewList
 
+from sphinx.util import force_decode
 from sphinx.util.compat import Directive
 from sphinx.util.nodes import nested_parse_with_titles
 from sphinx.util.docstrings import prepare_docstring
+from sphinx.pycode import ModuleAnalyzer
 
 from sphinxcontrib import httpdomain
-
-
-def import_object(import_name):
-    module_name, expr = import_name.split(':', 1)
-    mod = __import__(module_name)
-    mod = reduce(getattr, module_name.split('.')[1:], mod)
-    globals = __builtins__
-    if not isinstance(globals, dict):
-        globals = globals.__dict__
-    return eval(expr, globals, mod.__dict__)
-
-
-def http_directive(method, path, content):
-    method = method.lower().strip()
-    if isinstance(content, basestring):
-        content = content.splitlines()
-    yield ''
-    yield '.. http:{method}:: {path}'.format(**locals())
-    yield ''
-    for line in content:
-        yield '   ' + line
-    yield ''
+from sphinxcontrib.autohttp.common import http_directive, import_object
 
 
 def translate_werkzeug_rule(rule):
     from werkzeug.routing import parse_rule
-    buf = StringIO.StringIO()
+    buf = six.StringIO()
     for conv, arg, var in parse_rule(rule):
         if conv:
             buf.write('(')
@@ -76,21 +56,55 @@ class AutoflaskDirective(Directive):
 
     has_content = True
     required_arguments = 1
-    option_spec = {'undoc-endpoints': str,
-                   'undoc-static': str,
-                   'include-empty-docstring': str}
+    option_spec = {'endpoints': directives.unchanged,
+                   'blueprints': directives.unchanged,
+                   'undoc-endpoints': directives.unchanged,
+                   'undoc-blueprints': directives.unchanged,
+                   'undoc-static': directives.unchanged,
+                   'include-empty-docstring': directives.unchanged}
+
+    @property
+    def endpoints(self):
+        endpoints = self.options.get('endpoints', None)
+        if not endpoints:
+            return None
+        return frozenset(re.split(r'\s*,\s*', endpoints))
 
     @property
     def undoc_endpoints(self):
-        try:
-            endpoints = re.split(r'\s*,\s*', self.options['undoc-endpoints'])
-        except KeyError:
+        undoc_endpoints = self.options.get('undoc-endpoints', None)
+        if not undoc_endpoints:
             return frozenset()
-        return frozenset(endpoints)
+        return frozenset(re.split(r'\s*,\s*', undoc_endpoints))
+
+    @property
+    def blueprints(self):
+        blueprints = self.options.get('blueprints', None)
+        if not blueprints:
+            return None
+        return frozenset(re.split(r'\s*,\s*', blueprints))
+
+    @property
+    def undoc_blueprints(self):
+        undoc_blueprints = self.options.get('undoc-blueprints', None)
+        if not undoc_blueprints:
+            return frozenset()
+        return frozenset(re.split(r'\s*,\s*', undoc_blueprints))
 
     def make_rst(self):
         app = import_object(self.arguments[0])
         for method, path, endpoint in get_routes(app):
+            try:
+                blueprint, endpoint_internal = endpoint.split('.')
+                if self.blueprints and blueprint not in self.blueprints:
+                    continue
+                if blueprint in self.undoc_blueprints:
+                    continue
+            except ValueError:
+                pass  # endpoint is not within a blueprint
+
+            if self.endpoints and endpoint not in self.endpoints:
+                continue
             if endpoint in self.undoc_endpoints:
                 continue
             try:
@@ -102,6 +116,14 @@ class AutoflaskDirective(Directive):
                 continue
             view = app.view_functions[endpoint]
             docstring = view.__doc__ or ''
+            if hasattr(view, 'view_class'):
+                meth_func = getattr(view.view_class, method.lower(), None)
+                if meth_func and meth_func.__doc__:
+                    docstring = meth_func.__doc__
+            if not isinstance(docstring, six.text_type):
+                analyzer = ModuleAnalyzer.for_module(view.__module__)
+                docstring = force_decode(docstring, analyzer.encoding)
+    
             if not docstring and 'include-empty-docstring' not in self.options:
                 continue
             docstring = prepare_docstring(docstring)

@@ -1,4 +1,4 @@
-# $Id: core.py 7384 2012-03-19 22:59:09Z milde $
+# $Id: core.py 7466 2012-06-25 14:56:51Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -20,7 +20,7 @@ from docutils import __version__, __version_details__, SettingsSpec
 from docutils import frontend, io, utils, readers, writers
 from docutils.frontend import OptionParser
 from docutils.transforms import Transformer
-from docutils.error_reporting import ErrorOutput, ErrorString
+from docutils.utils.error_reporting import ErrorOutput, ErrorString
 import docutils.readers.doctree
 
 class Publisher:
@@ -176,8 +176,7 @@ class Publisher:
         try:
             self.source = self.source_class(
                 source=source, source_path=source_path,
-                encoding=self.settings.input_encoding,
-                handle_io_errors=False)
+                encoding=self.settings.input_encoding)
         except TypeError:
             self.source = self.source_class(
                 source=source, source_path=source_path,
@@ -192,9 +191,6 @@ class Publisher:
             destination=destination, destination_path=destination_path,
             encoding=self.settings.output_encoding,
             error_handler=self.settings.output_encoding_error_handler)
-        # Raise IOError instead of system exit with `tracback == True`
-        # TODO: change io.FileInput's default behaviour and remove this hack
-        self.destination.handle_io_errors=False
 
     def apply_transforms(self):
         self.document.transformer.populate_from_components(

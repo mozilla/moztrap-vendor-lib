@@ -1,5 +1,5 @@
-# .. coding: utf8
-# $Id: __init__.py 7389 2012-03-30 11:58:21Z milde $
+# .. coding: utf-8
+# $Id: __init__.py 7668 2013-06-04 12:46:30Z milde $
 # Author: Engelbert Gruber, Günter Milde
 # Maintainer: docutils-develop@lists.sourceforge.net
 # Copyright: This module has been placed in the public domain.
@@ -24,14 +24,9 @@ try:
 except ImportError:
     import docutils.utils.roman as roman
 from docutils import frontend, nodes, languages, writers, utils, io
-from docutils.error_reporting import SafeString
+from docutils.utils.error_reporting import SafeString
 from docutils.transforms import writer_aux
-from docutils.math import pick_math_environment, unichar2tex
-
-# compatibility module for Python 2.3
-if not hasattr(string, 'Template'):
-    import docutils._string_template_compat
-    string.Template = docutils._string_template_compat.Template
+from docutils.utils.math import pick_math_environment, unichar2tex
 
 class Writer(writers.Writer):
 
@@ -92,12 +87,16 @@ class Writer(writers.Writer):
          '".sty" or omitted and with \\input else. '
           ' Overrides previous --stylesheet and --stylesheet-path settings.',
           ['--stylesheet'],
-          {'default': '', 'metavar': '<file>',
-           'overrides': 'stylesheet_path'}),
-         ('Like --stylesheet, but the path is rewritten '
-          'relative to the output file. ',
+          {'default': '', 'metavar': '<file[,file,...]>',
+           'overrides': 'stylesheet_path',
+           'validator': frontend.validate_comma_separated_list}),
+         ('Comma separated list of LaTeX packages/stylesheets. '
+          'Relative paths are expanded if a matching file is found in '
+          'the --stylesheet-dirs. With --link-stylesheet, '
+          'the path is rewritten relative to the output *.tex file. ',
           ['--stylesheet-path'],
-          {'metavar': '<file>', 'overrides': 'stylesheet'}),
+          {'metavar': '<file[,file,...]>', 'overrides': 'stylesheet',
+           'validator': frontend.validate_comma_separated_list}),
          ('Link to the stylesheet(s) in the output file. (default)',
           ['--link-stylesheet'],
           {'dest': 'embed_stylesheet', 'action': 'store_false'}),
@@ -106,6 +105,13 @@ class Writer(writers.Writer):
           ['--embed-stylesheet'],
           {'default': 0, 'action': 'store_true',
            'validator': frontend.validate_boolean}),
+         ('Comma-separated list of directories where stylesheets are found. '
+          'Used by --stylesheet-path when expanding relative path arguments. '
+          'Default: "."',
+          ['--stylesheet-dirs'],
+          {'metavar': '<dir[,dir,...]>',
+           'validator': frontend.validate_comma_separated_list,
+           'default': ['.']}),
          ('Customization by LaTeX code in the preamble. '
           'Default: select PDF standard fonts (Times, Helvetica, Courier).',
           ['--latex-preamble'],
@@ -211,8 +217,6 @@ class Writer(writers.Writer):
 
     settings_defaults = {'sectnum_depth': 0 # updated by SectNum transform
                         }
-    relative_path_settings = ('stylesheet_path',)
-
     config_section = 'latex2e writer'
     config_section_dependencies = ('writers',)
 
@@ -231,14 +235,11 @@ class Writer(writers.Writer):
 
     # Override parent method to add latex-specific transforms
     def get_transforms(self):
-       # call the parent class' method
-       transform_list = writers.Writer.get_transforms(self)
-       # print transform_list
+       return writers.Writer.get_transforms(self) + [
        # Convert specific admonitions to generic one
-       transform_list.append(writer_aux.Admonitions)
+       writer_aux.Admonitions,
        # TODO: footnote collection transform
-       # transform_list.append(footnotes.collect)
-       return transform_list
+       ]
 
     def translate(self):
         visitor = self.translator_class(self.document)
@@ -299,29 +300,29 @@ class Babel(object):
         'cy':           'welsh',
         'da':           'danish',
         'de':           'ngerman', # new spelling (de_1996)
-        'de_1901':      'german', # old spelling
-        'de_at':        'naustrian',
-        'de_at_1901':   'austrian',
+        'de-1901':      'german', # old spelling
+        'de-AT':        'naustrian',
+        'de-AT-1901':   'austrian',
         'dsb':          'lowersorbian',
         'el':           'greek', # monotonic (el-monoton)
-        'el_polyton':   'polutonikogreek',
+        'el-polyton':   'polutonikogreek',
         'en':           'english',  # TeX' default language
-        'en_au':        'australian',
-        'en_ca':        'canadian',
-        'en_gb':        'british',
-        'en_nz':        'newzealand',
-        'en_us':        'american',
-        'eo':           'esperanto', # '^' is active
+        'en-AU':        'australian',
+        'en-CA':        'canadian',
+        'en-GB':        'british',
+        'en-NZ':        'newzealand',
+        'en-US':        'american',
+        'eo':           'esperanto',
         'es':           'spanish',
         'et':           'estonian',
         'eu':           'basque',
         # 'fa':           'farsi',
         'fi':           'finnish',
         'fr':           'french',
-        'fr_ca':        'canadien',
+        'fr-CA':        'canadien',
         'ga':           'irish',    # Irish Gaelic
         # 'grc':                    # Ancient Greek
-        'grc_ibycus':   'ibycus',   # Ibycus encoding
+        'grc-ibycus':   'ibycus',   # Ibycus encoding
         'gl':           'galician',
         'he':           'hebrew',
         'hr':           'croatian',
@@ -341,57 +342,85 @@ class Babel(object):
         'nb':           'norsk',     # Norwegian Bokmal
         'nl':           'dutch',
         'nn':           'nynorsk',   # Norwegian Nynorsk
-        'no':           'norsk',     # Norwegian Bokmal
+        'no':           'norsk',     # Norwegian (Bokmal)
         'pl':           'polish',
         'pt':           'portuges',
-        'pt_br':        'brazil',
+        'pt-BR':        'brazil',
         'ro':           'romanian',
-        'ru':           'russian',   # '"' is active
+        'ru':           'russian',
         'se':           'samin',     # North Sami
-        # sh-cyrl:      Serbo-Croatian, Cyrillic script
-        'sh-latn':      'serbian', # Serbo-Croatian, Latin script
+        'sh-Cyrl':      'serbianc',  # Serbo-Croatian, Cyrillic script
+        'sh-Latn':      'serbian',   # Serbo-Croatian, Latin script see also 'hr'
         'sk':           'slovak',
         'sl':           'slovene',
         'sq':           'albanian',
-        # 'sr-cyrl':    Serbian, Cyrillic script (sr-cyrl)
-        'sr-latn':      'serbian', # Serbian, Latin script, " active.
+        'sr':           'serbianc',  # Serbian, Cyrillic script (contributed)
+        'sr-Latn':      'serbian',   # Serbian, Latin script
         'sv':           'swedish',
         # 'th':           'thai',
         'tr':           'turkish',
         'uk':           'ukrainian',
         'vi':           'vietnam',
-        # zh-latn:      Chinese Pinyin
+        # zh-Latn:      Chinese Pinyin
         }
+    # normalize (downcase) keys
+    language_codes = dict([(k.lower(), v) for (k,v) in language_codes.items()])
+
     warn_msg = 'Language "%s" not supported by LaTeX (babel)'
+
+    # "Active characters" are shortcuts that start a LaTeX macro and may need
+    # escaping for literals use. Characters that prevent literal use (e.g.
+    # starting accent macros like "a -> ä) will be deactivated if one of the
+    # defining languages is used in the document.
+    # Special cases:
+    #  ~ (tilde) -- used in estonian, basque, galician, and old versions of
+    #    spanish -- cannot be deactivated as it denotes a no-break space macro,
+    #  " (straight quote) -- used in albanian, austrian, basque
+    #    brazil, bulgarian, catalan, czech, danish, dutch, estonian,
+    #    finnish, galician, german, icelandic, italian, latin, naustrian,
+    #    ngerman, norsk, nynorsk, polish, portuges, russian, serbian, slovak,
+    #    slovene, spanish, swedish, ukrainian, and uppersorbian --
+    #    is escaped as ``\textquotedbl``.
+    active_chars = {# TeX/Babel-name:  active characters to deactivate
+                    # 'breton':        ':;!?' # ensure whitespace
+                    # 'esperanto':     '^',
+                    # 'estonian':      '~"`',
+                    # 'french':        ':;!?' # ensure whitespace
+                    'galician':        '.<>', # also '~"'
+                    # 'magyar':        '`', # for special hyphenation cases
+                    'spanish':         '.<>', # old versions also '~'
+                    # 'turkish':       ':!=' # ensure whitespace
+                   }
 
     def __init__(self, language_code, reporter=None):
         self.reporter = reporter
         self.language = self.language_name(language_code)
         self.otherlanguages = {}
-        self.quote_index = 0
-        self.quotes = ('``', "''")
-        # language dependent configuration:
-        # double quotes are "active" in some languages (e.g. German).
-        self.literal_double_quote = u'"'
-        if self.language in ('ngerman', 'german', 'austrian', 'naustrian',
-                             'russian'):
-            self.quotes = (r'\glqq{}', r'\grqq{}')
-            self.literal_double_quote = ur'\dq{}'
-        if self.language == 'french':
-            self.quotes = (r'\og{}', r'\fg{}')
-        if self.language == 'italian':
-            self.literal_double_quote = ur'{\char`\"}'
 
     def __call__(self):
         """Return the babel call with correct options and settings"""
-        languages = self.otherlanguages.keys()
+        languages = sorted(self.otherlanguages.keys())
         languages.append(self.language or 'english')
         self.setup = [r'\usepackage[%s]{babel}' % ','.join(languages)]
-        if 'spanish' in languages:
-            # reset active chars to the original meaning:
-            self.setup.append(
-                r'\addto\shorthandsspanish{\spanishdeactivate{."~<>}}')
-            # or prepend r'\def\spanishoptions{es-noshorthands}'
+        # Deactivate "active characters"
+        shorthands = []
+        for c in ''.join([self.active_chars.get(l, '') for l in languages]):
+            if c not in shorthands:
+                shorthands.append(c)
+        if shorthands:
+            self.setup.append(r'\AtBeginDocument{\shorthandoff{%s}}'
+                              % ''.join(shorthands))
+        # Including '~' in shorthandoff prevents its use as no-break space
+        if 'galician' in languages:
+            self.setup.append(r'\deactivatetilden % restore ~ in Galician')
+        if 'estonian' in languages:
+            self.setup.extend([r'\makeatletter',
+                               r'  \addto\extrasestonian{\bbl@deactivate{~}}',
+                               r'\makeatother'])
+        if 'basque' in languages:
+            self.setup.extend([r'\makeatletter',
+                               r'  \addto\extrasbasque{\bbl@deactivate{~}}',
+                               r'\makeatother'])
         if (languages[-1] == 'english' and
             'french' in self.otherlanguages.keys()):
             self.setup += ['% Prevent side-effects if French hyphenation '
@@ -400,20 +429,6 @@ class Babel(object):
                            r'\AtBeginDocument{\selectlanguage{%s}'
                            r'\noextrasfrench}' % self.language]
         return '\n'.join(self.setup)
-
-    def next_quote(self):
-        q = self.quotes[self.quote_index]
-        self.quote_index = (self.quote_index+1) % 2
-        return q
-
-    def quote_quotes(self,text):
-        t = None
-        for part in text.split('"'):
-            if t == None:
-                t = part
-            else:
-                t += self.next_quote() + part
-        return t
 
     def language_name(self, language_code):
         """Return TeX language name for `language_code`"""
@@ -427,8 +442,7 @@ class Babel(object):
         return ''
 
     def get_language(self):
-        """Return `self.language` (for backwards compatibility with Sphinx).
-        """
+        # Obsolete, kept for backwards compatibility with Sphinx
         return self.language
 
 
@@ -548,7 +562,13 @@ PreambleCmds.graphicx_auto = r"""% Check output format
   \usepackage{graphicx}
 \else
   \usepackage[pdftex]{graphicx}
-\fi'))"""
+\fi"""
+
+PreambleCmds.highlight_rules = r"""% basic code highlight:
+\providecommand*\DUrolecomment[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\providecommand*\DUroledeleted[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\providecommand*\DUrolekeyword[1]{\textbf{#1}}
+\providecommand*\DUrolestring[1]{\textit{#1}}"""
 
 PreambleCmds.inline = r"""
 % inline markup (custom roles)
@@ -699,6 +719,8 @@ class CharMaps(object):
         ord('\\'): ur'\textbackslash{}',
         ord('{'): ur'\{',
         ord('}'): ur'\}',
+        # straight double quotes are 'active' in many languages
+        ord('"'): ur'\textquotedbl{}',
         # Square brackets are ordinary chars and cannot be escaped with '\',
         # so we put them in a group '{[}'. (Alternative: ensure that all
         # macros with optional arguments are terminated with {} and text
@@ -707,7 +729,8 @@ class CharMaps(object):
         # group, e.g. ``\item[{\hyperref[label]{text}}]``.
         ord('['): ur'{[}',
         ord(']'): ur'{]}',
-        # the soft hyphen is unknown in 8-bit text and not properly handled by XeTeX
+        # the soft hyphen is unknown in 8-bit text
+        # and not properly handled by XeTeX
         0x00AD: ur'\-', # SOFT HYPHEN
     }
     # Unicode chars that are not recognized by LaTeX's utf8 encoding
@@ -725,6 +748,8 @@ class CharMaps(object):
     }
     # Unicode chars that are recognized by LaTeX's utf8 encoding
     utf8_supported_unicode = {
+        0x00AB: ur'\guillemotleft', # LEFT-POINTING DOUBLE ANGLE QUOTATION MARK
+        0x00bb: ur'\guillemotright', # RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK
         0x200C: ur'\textcompwordmark', # ZERO WIDTH NON-JOINER
         0x2013: ur'\textendash{}',
         0x2014: ur'\textemdash{}',
@@ -764,7 +789,7 @@ class CharMaps(object):
         0x00b3: ur'\textthreesuperior{}', # ³ SUPERSCRIPT THREE
         0x00b4: ur'\textasciiacute{}',    # ´ ACUTE ACCENT
         0x00b5: ur'\textmu{}',            # µ MICRO SIGN
-        0x00b6: ur'\textparagraph{}',     # ¶ PILCROW SIGN # not equal to \textpilcrow
+        0x00b6: ur'\textparagraph{}',     # ¶ PILCROW SIGN # != \textpilcrow
         0x00b9: ur'\textonesuperior{}',   # ¹ SUPERSCRIPT ONE
         0x00ba: ur'\textordmasculine{}',  # º MASCULINE ORDINAL INDICATOR
         0x00bc: ur'\textonequarter{}',    # 1/4 FRACTION
@@ -772,7 +797,7 @@ class CharMaps(object):
         0x00be: ur'\textthreequarters{}', # 3/4 FRACTION
         0x00d7: ur'\texttimes{}',         # × MULTIPLICATION SIGN
         0x00f7: ur'\textdiv{}',           # ÷ DIVISION SIGN
-        #
+        # others
         0x0192: ur'\textflorin{}',        # LATIN SMALL LETTER F WITH HOOK
         0x02b9: ur'\textasciiacute{}',    # MODIFIER LETTER PRIME
         0x02ba: ur'\textacutedbl{}',      # MODIFIER LETTER DOUBLE PRIME
@@ -1256,9 +1281,19 @@ class LaTeXTranslator(nodes.NodeVisitor):
             self.requirements['_inputenc'] = (r'\usepackage[%s]{inputenc}'
                                               % self.latex_encoding)
         # TeX font encoding
-        if self.font_encoding and not self.is_xetex:
-            self.requirements['_fontenc'] = (r'\usepackage[%s]{fontenc}' %
-                                             self.font_encoding)
+        if not self.is_xetex:
+            if self.font_encoding:
+                self.requirements['_fontenc'] = (r'\usepackage[%s]{fontenc}' %
+                                                 self.font_encoding)
+            # ensure \textquotedbl is defined:
+            for enc in self.font_encoding.split(','):
+                enc = enc.strip()
+                if enc == 'OT1':
+                    self.requirements['_textquotedblOT1'] = (
+                        r'\DeclareTextSymbol{\textquotedbl}{OT1}{`\"}')
+                elif enc not in ('T1', 'T2A', 'T2B', 'T2C', 'T4', 'T5'):
+                    self.requirements['_textquotedbl'] = (
+                        r'\DeclareTextSymbolDefault{\textquotedbl}{T1}')
         # page layout with typearea (if there are relevant document options)
         if (settings.documentclass.find('scr') == -1 and
             (self.documentoptions.find('DIV') != -1 or
@@ -1288,7 +1323,7 @@ class LaTeXTranslator(nodes.NodeVisitor):
         ##                                     len(self.d_class.sections))
 
         # Section numbering
-        if not self.settings.sectnum_xform: # section numbering by Docutils
+        if settings.sectnum_xform: # section numbering by Docutils
             PreambleCmds.secnumdepth = r'\setcounter{secnumdepth}{0}'
         else: # section numbering by LaTeX:
             secnumdepth = settings.sectnum_depth
@@ -1338,8 +1373,7 @@ class LaTeXTranslator(nodes.NodeVisitor):
                 path = base + '.sty' # ensure extension
             try:
                 content = io.FileInput(source_path=path,
-                                       encoding='utf-8',
-                                       handle_io_errors=False).read()
+                                       encoding='utf-8').read()
                 self.settings.record_dependencies.add(path)
             except IOError, err:
                 msg = u"Cannot embed stylesheet '%s':\n  %s." % (
@@ -1440,10 +1474,6 @@ class LaTeXTranslator(nodes.NodeVisitor):
                 table[ord('>')] = ur'\textgreater{}'
         if self.insert_non_breaking_blanks:
             table[ord(' ')] = ur'~'
-        if self.literal:
-            # double quotes are 'active' in some languages
-            # TODO: use \textquotedbl if font encoding starts with T?
-            table[ord('"')] = self.babel.literal_double_quote
         # Unicode replacements for 8-bit tex engines (not required with XeTeX/LuaTeX):
         if not self.is_xetex:
             table.update(CharMaps.unsupported_unicode)
@@ -1480,8 +1510,6 @@ class LaTeXTranslator(nodes.NodeVisitor):
                 if not line.lstrip():
                     lines[i] += '~'
             text = (r'\\' + '\n').join(lines)
-        if not self.literal:
-            text = self.babel.quote_quotes(text)
         if self.literal and not self.insert_non_breaking_blanks:
             # preserve runs of spaces but allow wrapping
             text = text.replace('  ', ' ~')
@@ -1500,7 +1528,7 @@ class LaTeXTranslator(nodes.NodeVisitor):
     ##     return head + '\n' + body
 
     def is_inline(self, node):
-        """Check whether a node represents an inline element"""
+        """Check whether a node represents an inline or block-level element"""
         return isinstance(node.parent, nodes.TextElement)
 
     def append_hypertargets(self, node):
@@ -1596,8 +1624,12 @@ class LaTeXTranslator(nodes.NodeVisitor):
             self.out.append( '%\n\\begin{list}{}{}\n' )
         else:
             self.out.append( '%\n\\begin{itemize}\n' )
+        # if node['classes']:
+        #     self.visit_inline(node)
 
     def depart_bullet_list(self, node):
+        # if node['classes']:
+        #     self.depart_inline(node)
         if self.is_toc_list:
             self.out.append( '\n\\end{list}\n' )
         else:
@@ -1624,7 +1656,7 @@ class LaTeXTranslator(nodes.NodeVisitor):
         self.out.append('}')
 
     def visit_caption(self, node):
-        self.out.append( '\\caption{' )
+        self.out.append('\n\\caption{')
 
     def depart_caption(self, node):
         self.out.append('}\n')
@@ -1947,6 +1979,7 @@ class LaTeXTranslator(nodes.NodeVisitor):
             count = node['morerows'] + 1
             self.active_table.set_rowspan(
                                 self.active_table.get_entry_number()-1,count)
+            # TODO why does multirow end on % ? needs to be checked for below
             self.out.append('\\multirow{%d}{%s}{%%' %
                             (count,self.active_table.get_column_width()))
             self.context.append('}')
@@ -1970,9 +2003,13 @@ class LaTeXTranslator(nodes.NodeVisitor):
 
         # header / not header
         if isinstance(node.parent.parent, nodes.thead):
+            if self.out[-1].endswith("%"):
+                self.out.append("\n")
             self.out.append('\\textbf{%')
             self.context.append('}')
         elif self.active_table.is_stub_column():
+            if self.out[-1].endswith("%"):
+                self.out.append("\n")
             self.out.append('\\textbf{')
             self.context.append('}')
         else:
@@ -2094,21 +2131,18 @@ class LaTeXTranslator(nodes.NodeVisitor):
 
     def visit_figure(self, node):
         self.requirements['float_settings'] = PreambleCmds.float_settings
-        # ! the 'align' attribute should set "outer alignment" !
-        # For "inner alignment" use LaTeX default alignment (similar to HTML)
-        ## if ('align' not in node.attributes or
-        ##     node.attributes['align'] == 'center'):
-        ##     align = '\n\\centering'
-        ##     align_end = ''
-        ## else:
-        ##     # TODO non vertical space for other alignments.
-        ##     align = '\\begin{flush%s}' % node.attributes['align']
-        ##     align_end = '\\end{flush%s}' % node.attributes['align']
-        ## self.out.append( '\\begin{figure}%s\n' % align )
-        ## self.context.append( '%s\\end{figure}\n' % align_end )
-        self.out.append('\\begin{figure}')
+        # The 'align' attribute sets the "outer alignment",
+        # for "inner alignment" use LaTeX default alignment (similar to HTML)
+        alignment = node.attributes.get('align', 'center')
+        if alignment != 'center':
+            # The LaTeX "figure" environment always uses the full textwidth,
+            # so "outer alignment" is ignored. Just write a comment.
+            # TODO: use the wrapfigure environment?
+            self.out.append('\\begin{figure} %% align = "%s"\n' % alignment)
+        else:
+            self.out.append('\\begin{figure}\n')
         if node.get('ids'):
-            self.out += ['\n'] + self.ids_to_labels(node)
+            self.out += self.ids_to_labels(node) + ['\n']
 
     def depart_figure(self, node):
         self.out.append('\\end{figure}\n')
@@ -2262,7 +2296,6 @@ class LaTeXTranslator(nodes.NodeVisitor):
         pre = []
         post = []
         include_graphics_options = []
-        display_style = ('block-', 'inline-')[self.is_inline(node)]
         align_codes = {
             # inline images: by default latex aligns the bottom.
             'bottom': ('', ''),
@@ -2273,6 +2306,7 @@ class LaTeXTranslator(nodes.NodeVisitor):
             'left':   (r'\noindent{', r'\hfill}'),
             'right':  (r'\noindent{\hfill', '}'),}
         if 'align' in attrs:
+            # TODO: warn or ignore non-applicable alignment settings?
             try:
                 align_code = align_codes[attrs['align']]
                 pre.append(align_code[0])
@@ -2288,7 +2322,8 @@ class LaTeXTranslator(nodes.NodeVisitor):
         if 'width' in attrs:
             include_graphics_options.append('width=%s' %
                             self.to_latex_length(attrs['width']))
-        if not self.is_inline(node):
+        if not (self.is_inline(node) or
+                isinstance(node.parent, nodes.figure)):
             pre.append('\n')
             post.append('\n')
         pre.reverse()
@@ -2309,14 +2344,14 @@ class LaTeXTranslator(nodes.NodeVisitor):
         # depart_inline()):
         classes = node['classes'][:]
         self.context.append('}' * len(classes))
-        # handle language specification:
+    # handle language specification:
         language_tags = [cls for cls in classes
                          if cls.startswith('language-')]
         if language_tags:
             language = self.babel.language_name(language_tags[0][9:])
             if language:
                 self.babel.otherlanguages[language] = True
-                self.out.append(r'\otherlanguage{%s}{' % language)
+                self.out.append(r'\foreignlanguage{%s}{' % language)
                 classes.pop(classes.index(language_tags[0]))
         if not classes:
             return
@@ -2376,6 +2411,9 @@ class LaTeXTranslator(nodes.NodeVisitor):
 
     def visit_literal(self, node):
         self.literal = True
+        if 'code' in node.get('classes', []):
+            self.requirements['color'] = PreambleCmds.color
+            self.requirements['code'] = PreambleCmds.highlight_rules
         self.out.append('\\texttt{')
         if node['classes']:
             self.visit_inline(node)
@@ -2879,7 +2917,8 @@ class LaTeXTranslator(nodes.NodeVisitor):
             self.context.append('')
         # Section title
         else:
-            self.requirements['secnumdepth'] = PreambleCmds.secnumdepth
+            if hasattr(PreambleCmds, 'secnumdepth'):
+                self.requirements['secnumdepth'] = PreambleCmds.secnumdepth
             section_name = self.d_class.section(self.section_level)
             self.out.append('\n\n')
             # System messages heading in red:

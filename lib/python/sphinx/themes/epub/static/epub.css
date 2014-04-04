@@ -4,7 +4,7 @@
  *
  * Sphinx stylesheet -- epub theme.
  *
- * :copyright: Copyright 2007-2011 by the Sphinx team, see AUTHORS.
+ * :copyright: Copyright 2007-2014 by the Sphinx team, see AUTHORS.
  * :license: BSD, see LICENSE for details.
  *
  */
@@ -22,6 +22,7 @@ a:link, a:visited {
 
 img {
     border: 0;
+    max-width: 100%;
 }
 
 /* -- relbar ---------------------------------------------------------------- */
@@ -91,6 +92,7 @@ div.sphinxsidebar input {
 
 img {
     border: 0;
+    max-width: 100%;
 }
 
 /* -- search page ----------------------------------------------------------- */
@@ -316,10 +318,6 @@ dl.glossary dt {
     margin: 0;
 }
 
-.refcount {
-    color: #060;
-}
-
 .optional {
     font-size: 130%;
 }
@@ -341,7 +339,7 @@ dl.glossary dt {
 /* -- code displays --------------------------------------------------------- */
 
 pre {
-    font-family: "LiberationNarrow", monospace;
+    font-family: monospace;
     overflow: auto;
     overflow-y: hidden;
 }
@@ -362,7 +360,7 @@ table.highlighttable td {
 }
 
 tt {
-    font-family: "LiberationNarrow", monospace;
+    font-family: monospace;
 }
 
 tt.descname {
@@ -434,6 +432,7 @@ table .link-target {
 
 /* -- font-face ------------------------------------------------------------- */
 
+/*
 @font-face {
     font-family: "LiberationNarrow";
     font-style: normal;
@@ -462,4 +461,4 @@ table .link-target {
     src: url("res:///Data/fonts/LiberationNarrow-BoldItalic.otf")
         format("opentype");
 }
-
+*/

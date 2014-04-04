@@ -44,7 +44,7 @@ class DocRef(object):
         location of the RFC which defines some HTTP method.
 
         """
-        return '{}#{}{}'.format(self.base_url, self.anchor, self.section)
+        return '{0}#{1}{2}'.format(self.base_url, self.anchor, self.section)
 
 
 #: The URL of the HTTP/1.1 RFC which defines the HTTP methods OPTIONS, GET,
@@ -144,10 +144,20 @@ class HTTPResource(ObjectDescription):
         TypedField('parameter', label='Parameters',
                    names=('param', 'parameter', 'arg', 'argument'),
                    typerolename='obj', typenames=('paramtype', 'type')),
-        GroupedField('queryparameter', label='Query Parameters',
-                     names=('queryparameter', 'queryparam', 'qparam', 'query')),
+        TypedField('jsonparameter', label='JSON Parameters',
+                   names=('jsonparameter', 'jsonparam', 'json'),
+                   typerolename='obj', typenames=('jsonparamtype', 'jsontype')),
+        TypedField('queryparameter', label='Query Parameters',
+                     names=('queryparameter', 'queryparam', 'qparam', 'query'),
+                     typerolename='obj', typenames=('queryparamtype', 'querytype', 'qtype')),
         GroupedField('formparameter', label='Form Parameters',
                      names=('formparameter', 'formparam', 'fparam', 'form')),
+        GroupedField('requestheader', label='Request Headers',
+                     rolename='mailheader',
+                     names=('reqheader', 'requestheader')),
+        GroupedField('responseheader', label='Response Headers',
+                     rolename='mailheader',
+                     names=('resheader', 'responseheader')),
         GroupedField('statuscode', label='Status Codes',
                      rolename='statuscode',
                      names=('statuscode', 'status', 'code'))
@@ -246,7 +256,7 @@ def http_statuscode_role(name, rawtext, text, lineno, inliner,
         try:
             code, status = re.split(r'\s', text.strip(), 1)
             code = int(code)
-        except Value:
+        except ValueError:
             msg = inliner.reporter.error(
                 'HTTP status code must be an integer (e.g. `200`) or '
                 'start with an integer (e.g. `200 OK`); %r is invalid' %
@@ -278,7 +288,7 @@ def http_method_role(name, rawtext, text, lineno, inliner,
                      options={}, content=[]):
     method = str(text).lower()
     if method not in DOCREFS:
-        msg = inliner.reporter.error('%s is not valid HTTP method' % umethod,
+        msg = inliner.reporter.error('%s is not valid HTTP method' % method,
                                      lineno=lineno)
         prb = inliner.problematic(rawtext, rawtext, msg)
         return [prb], [msg]
@@ -324,8 +334,8 @@ class HTTPIndex(Index):
     def generate(self, docnames=None):
         content = {}
         items = ((method, path, info)
-            for method, routes in self.domain.routes.iteritems()
-            for path, info in routes.iteritems())
+            for method, routes in self.domain.routes.items()
+            for path, info in routes.items())
         items = sorted(items, key=lambda item: item[1])
         for method, path, info in items:
             entries = content.setdefault(self.grouping_prefix(path), [])
@@ -333,8 +343,7 @@ class HTTPIndex(Index):
                 method.upper() + ' ' + path, 0, info[0],
                 http_resource_anchor(method, path), '', '', info[1]
             ])
-        content = content.items()
-        content.sort(key=lambda (k, v): k)
+        content = sorted(content.items(), key=lambda k: k[0])
         return (content, True)
 
 
@@ -397,8 +406,8 @@ class HTTPDomain(Domain):
         return dict((key, self.data[key]) for key in self.object_types)
 
     def clear_doc(self, docname):
-        for typ, routes in self.routes.iteritems():
-            for path, info in routes.items():
+        for typ, routes in self.routes.items():
+            for path, info in list(routes.items()):
                 if info[0] == docname:
                     del routes[path]
 
@@ -415,8 +424,8 @@ class HTTPDomain(Domain):
                                 contnode, title)
 
     def get_objects(self):
-        for method, routes in self.routes.iteritems():
-            for path, info in routes.iteritems():
+        for method, routes in self.routes.items():
+            for path, info in routes.items():
                 anchor = http_resource_anchor(method, path)
                 yield (path, path, method, info[0], anchor, 1)
 
@@ -441,6 +450,11 @@ class HTTPLexer(RegexLexer):
         yield match.start(4), Text, match.group(4)
         yield match.start(5), Literal, match.group(5)
         yield match.start(6), Text, match.group(6)
+
+    def continuous_header_callback(self, match):
+        yield match.start(1), Text, match.group(1)
+        yield match.start(2), Literal, match.group(2)
+        yield match.start(3), Text, match.group(3)
 
     def content_callback(self, match):
         content_type = getattr(self, 'content_type', None)
@@ -472,6 +486,7 @@ class HTTPLexer(RegexLexer):
         ],
         'headers': [
             (r'([^\s:]+)( *)(:)( *)([^\r\n]+)(\r?\n|$)', header_callback),
+            (r'([\t ]+)([^\r\n]+)(\r?\n|$)', continuous_header_callback),
             (r'\r?\n', Text, 'content')
         ],
         'content': [

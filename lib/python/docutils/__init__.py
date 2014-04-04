@@ -1,4 +1,4 @@
-# $Id: __init__.py 7446 2012-06-17 20:47:10Z grubert $
+# $Id: __init__.py 7693 2013-07-22 07:54:27Z grubert $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -26,9 +26,6 @@ Modules:
 - statemachine.py: A finite state machine specialized for
   regular-expression-based text filters.
 
-- urischemes.py: Contains a complete mapping of known URI addressing
-  scheme names to descriptions.
-
 Subpackages:
 
 - languages: Language-specific mappings of terms.
@@ -44,12 +41,18 @@ Subpackages:
 - utils: Contains the ``Reporter`` system warning class and miscellaneous
   utilities used by readers, writers, and transforms.
 
+  utils/urischemes.py: Contains a complete mapping of known URI addressing
+  scheme names to descriptions.
+
+- utils/math: Contains functions for conversion of mathematical notation
+  between different formats (LaTeX, MathML, text, ...).
+
 - writers: Format-specific output translators.
 """
 
 __docformat__ = 'reStructuredText'
 
-__version__ = '0.9.1'
+__version__ = '0.11'
 """``major.minor.micro`` version number.  The micro number is bumped for API
 changes, for new functionality, and for interim project releases.  The minor
 number is bumped whenever there is a significant project release.  The major

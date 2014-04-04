@@ -1,4 +1,4 @@
-# $Id: tables.py 7328 2012-01-27 08:41:35Z milde $
+# $Id: tables.py 7662 2013-05-16 20:38:43Z milde $
 # Authors: David Goodger <goodger@python.org>; David Priest
 # Copyright: This module has been placed in the public domain.
 
@@ -14,7 +14,7 @@ import os.path
 import csv
 
 from docutils import io, nodes, statemachine, utils
-from docutils.error_reporting import SafeString
+from docutils.utils.error_reporting import SafeString
 from docutils.utils import SystemMessagePropagation
 from docutils.parsers.rst import Directive
 from docutils.parsers.rst import directives
@@ -164,6 +164,7 @@ class CSVTable(Table):
         quotechar = '"'
         doublequote = True
         skipinitialspace = True
+        strict = True
         lineterminator = '\n'
         quoting = csv.QUOTE_MINIMAL
 
@@ -189,6 +190,7 @@ class CSVTable(Table):
         escapechar = '\\'
         doublequote = False
         skipinitialspace = True
+        strict = True
         lineterminator = '\n'
         quoting = csv.QUOTE_MINIMAL
 
@@ -244,6 +246,7 @@ class CSVTable(Table):
         """
         encoding = self.options.get(
             'encoding', self.state.document.settings.input_encoding)
+        error_handler = self.state.document.settings.input_encoding_error_handler
         if self.content:
             # CSV data is from directive content.
             if 'file' in self.options or 'url' in self.options:
@@ -270,11 +273,9 @@ class CSVTable(Table):
             source = utils.relative_path(None, source)
             try:
                 self.state.document.settings.record_dependencies.add(source)
-                csv_file = io.FileInput(
-                    source_path=source, encoding=encoding,
-                    error_handler=(self.state.document.settings.\
-                                   input_encoding_error_handler),
-                    handle_io_errors=None)
+                csv_file = io.FileInput(source_path=source,
+                                        encoding=encoding,
+                                        error_handler=error_handler)
                 csv_data = csv_file.read().splitlines()
             except IOError, error:
                 severe = self.state_machine.reporter.severe(

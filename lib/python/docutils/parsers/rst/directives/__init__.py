@@ -1,4 +1,4 @@
-# $Id: __init__.py 7119 2011-09-02 13:00:23Z milde $
+# $Id: __init__.py 7621 2013-03-04 13:20:49Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -10,8 +10,12 @@ __docformat__ = 'reStructuredText'
 
 import re
 import codecs
+import sys
+
 from docutils import nodes
 from docutils.parsers.rst.languages import en as _fallback_language_module
+if sys.version_info < (2,5):
+    from docutils._compat import __import__
 
 
 _directive_registry = {
@@ -109,7 +113,7 @@ def directive(directive_name, language_module, document):
         # Error handling done by caller.
         return None, messages
     try:
-        module = __import__(modulename, globals(), locals())
+        module = __import__(modulename, globals(), locals(), level=1)
     except ImportError, detail:
         messages.append(document.reporter.error(
             'Error importing directive module "%s" (directive "%s"):\n%s'
@@ -228,9 +232,8 @@ def get_measure(argument, units):
     """
     match = re.match(r'^([0-9.]+) *(%s)$' % '|'.join(units), argument)
     try:
-        assert match is not None
         float(match.group(1))
-    except (AssertionError, ValueError):
+    except (AttributeError, ValueError):
         raise ValueError(
             'not a positive measure of one of the following units:\n%s'
             % ' '.join(['"%s"' % i for i in units]))
@@ -258,7 +261,11 @@ def length_or_percentage_or_unitless(argument, default=''):
     try:
         return get_measure(argument, length_units + ['%'])
     except ValueError:
-        return get_measure(argument, ['']) + default
+        try:
+            return get_measure(argument, ['']) + default
+        except ValueError:
+            # raise ValueError with list of valid units:
+            return get_measure(argument, length_units + ['%'])
 
 def class_option(argument):
     """

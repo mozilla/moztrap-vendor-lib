@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-# -*- coding: utf8 -*-
+# -*- coding: utf-8 -*-
 
 # :Author: Günter Milde <milde@users.sourceforge.net>
-# :Revision: $Revision: 7389 $
-# :Date: $Date: 2012-03-30 13:58:21 +0200 (Fre, 30 Mär 2012) $
+# :Revision: $Revision: 7668 $
+# :Date: $Date: 2013-06-04 14:46:30 +0200 (Tue, 04 Jun 2013) $
 # :Copyright: © 2010 Günter Milde.
 # :License: Released under the terms of the `2-Clause BSD license`_, in short:
 # 
@@ -42,7 +42,7 @@ class Writer(latex2e.Writer):
         r'% Linux Libertine (free, wide coverage, not only for Linux)',
         r'\setmainfont{Linux Libertine O}',
         r'\setsansfont{Linux Biolinum O}',
-        r'\setmonofont[HyphenChar=None]{DejaVu Sans Mono}',
+        r'\setmonofont[HyphenChar=None,Scale=MatchLowercase]{DejaVu Sans Mono}',
     ])
 
     config_section = 'xetex writer'
@@ -76,30 +76,33 @@ class Babel(latex2e.Babel):
         # code          Polyglossia-name       comment
         'cop':          'coptic',
         'de':           'german', # new spelling (de_1996)
-        'de_1901':      'ogerman', # old spelling
+        'de-1901':      'ogerman', # old spelling
         'dv':           'divehi',  # Maldivian
         'dsb':          'lsorbian',
-        'el_polyton':   'polygreek',
+        'el-polyton':   'polygreek',
         'fa':           'farsi',
         'grc':          'ancientgreek',
         'hsb':          'usorbian',
-        'sh-cyrl':      'serbian', # Serbo-Croatian, Cyrillic script
-        'sh-latn':      'croatian', # Serbo-Croatian, Latin script
+        'sh-Cyrl':      'serbian', # Serbo-Croatian, Cyrillic script
+        'sh-Latn':      'croatian', # Serbo-Croatian, Latin script
         'sq':           'albanian',
-        'sr':           'serbian', # Cyrillic script (sr-cyrl)
+        'sr':           'serbian', # Cyrillic script (sr-Cyrl)
         'th':           'thai',
         'vi':           'vietnamese',
-        # zh-latn:      ???        #     Chinese Pinyin
+        # zh-Latn:      ???        #     Chinese Pinyin
         })
+    # normalize (downcase) keys
+    language_codes = dict([(k.lower(), v) for (k,v) in language_codes.items()])
+
     # Languages without Polyglossia support:
     for key in ('af',           # 'afrikaans',
-                'de_at',        # 'naustrian',
-                'de_at_1901',   # 'austrian',
-                'fr_ca',        # 'canadien',
-                'grc_ibycus',   # 'ibycus', (Greek Ibycus encoding)
-                'sr-latn',      # 'serbian script=latin'
+                'de-AT',        # 'naustrian',
+                'de-AT-1901',   # 'austrian',
+                'fr-CA',        # 'canadien',
+                'grc-ibycus',   # 'ibycus', (Greek Ibycus encoding)
+                'sr-Latn',      # 'serbian script=latin'
                ):
-        del(language_codes[key])
+        del(language_codes[key.lower()])
 
     def __init__(self, language_code, reporter):
         self.language_code = language_code
@@ -118,7 +121,7 @@ class Babel(latex2e.Babel):
                  r'\setdefaultlanguage{%s}' % self.language]
         if self.otherlanguages:
             setup.append(r'\setotherlanguages{%s}' %
-                         ','.join(self.otherlanguages.keys()))
+                         ','.join(sorted(self.otherlanguages.keys())))
         return '\n'.join(setup)
 
 

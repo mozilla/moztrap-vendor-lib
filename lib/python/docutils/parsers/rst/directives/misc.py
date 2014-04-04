@@ -1,4 +1,4 @@
-# $Id: misc.py 7433 2012-05-11 21:03:07Z milde $
+# $Id: misc.py 7487 2012-07-22 21:20:28Z milde $
 # Authors: David Goodger <goodger@python.org>; Dethe Elza
 # Copyright: This module has been placed in the public domain.
 
@@ -11,7 +11,8 @@ import os.path
 import re
 import time
 from docutils import io, nodes, statemachine, utils
-from docutils.error_reporting import SafeString, ErrorString
+from docutils.utils.error_reporting import SafeString, ErrorString
+from docutils.utils.error_reporting import locale_encoding
 from docutils.parsers.rst import Directive, convert_directive_function
 from docutils.parsers.rst import directives, roles, states
 from docutils.parsers.rst.directives.body import CodeBlock, NumberLines
@@ -64,15 +65,14 @@ class Include(Directive):
         path = nodes.reprunicode(path)
         encoding = self.options.get(
             'encoding', self.state.document.settings.input_encoding)
+        e_handler=self.state.document.settings.input_encoding_error_handler
         tab_width = self.options.get(
             'tab-width', self.state.document.settings.tab_width)
         try:
             self.state.document.settings.record_dependencies.add(path)
-            include_file = io.FileInput(
-                source_path=path, encoding=encoding,
-                error_handler=(self.state.document.settings.\
-                               input_encoding_error_handler),
-                handle_io_errors=None)
+            include_file = io.FileInput(source_path=path,
+                                        encoding=encoding,
+                                        error_handler=e_handler)
         except UnicodeEncodeError, error:
             raise self.severe(u'Problems with "%s" directive path:\n'
                               'Cannot encode input file path "%s" '
@@ -186,6 +186,7 @@ class Raw(Directive):
         attributes = {'format': ' '.join(self.arguments[0].lower().split())}
         encoding = self.options.get(
             'encoding', self.state.document.settings.input_encoding)
+        e_handler=self.state.document.settings.input_encoding_error_handler
         if self.content:
             if 'file' in self.options or 'url' in self.options:
                 raise self.error(
@@ -203,11 +204,9 @@ class Raw(Directive):
                                                  self.options['file']))
             path = utils.relative_path(None, path)
             try:
-                raw_file = io.FileInput(
-                    source_path=path, encoding=encoding,
-                    error_handler=(self.state.document.settings.\
-                                   input_encoding_error_handler),
-                    handle_io_errors=None)
+                raw_file = io.FileInput(source_path=path,
+                                        encoding=encoding,
+                                        error_handler=e_handler)
                 # TODO: currently, raw input files are recorded as
                 # dependencies even if not used for the chosen output format.
                 self.state.document.settings.record_dependencies.add(path)
@@ -231,10 +230,9 @@ class Raw(Directive):
             except (urllib2.URLError, IOError, OSError), error:
                 raise self.severe(u'Problems with "%s" directive URL "%s":\n%s.'
                     % (self.name, self.options['url'], ErrorString(error)))
-            raw_file = io.StringInput(
-                source=raw_text, source_path=source, encoding=encoding,
-                error_handler=(self.state.document.settings.\
-                               input_encoding_error_handler))
+            raw_file = io.StringInput(source=raw_text, source_path=source,
+                                      encoding=encoding, 
+                                      error_handler=e_handler)
             try:
                 text = raw_file.read()
             except UnicodeError, error:
@@ -472,8 +470,22 @@ class Date(Directive):
             raise self.error(
                 'Invalid context: the "%s" directive can only be used within '
                 'a substitution definition.' % self.name)
-        format = '\n'.join(self.content) or '%Y-%m-%d'
-        text = time.strftime(format)
+        format_str = '\n'.join(self.content) or '%Y-%m-%d'
+        if sys.version_info< (3, 0):
+            try:
+                format_str = format_str.encode(locale_encoding or 'utf-8')
+            except UnicodeEncodeError:
+                raise self.warning(u'Cannot encode date format string '
+                    u'with locale encoding "%s".' % locale_encoding)
+        text = time.strftime(format_str)
+        if sys.version_info< (3, 0):
+            # `text` is a byte string that may contain non-ASCII characters:
+            try:
+                text = text.decode(locale_encoding or 'utf-8')
+            except UnicodeDecodeError:
+                text = text.decode(locale_encoding or 'utf-8', 'replace')
+                raise self.warning(u'Error decoding "%s"'
+                    u'with locale encoding "%s".' % (text, locale_encoding))
         return [nodes.Text(text)]
 
 

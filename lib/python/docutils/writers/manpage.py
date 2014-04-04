@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# $Id: manpage.py 7321 2012-01-20 06:50:44Z grubert $
+# $Id: manpage.py 7628 2013-03-09 10:19:35Z grubert $
 # Author: Engelbert Gruber <grubert@users.sourceforge.net>
 # Copyright: This module is put into the public domain.
 
@@ -57,6 +57,7 @@ FIELD_LIST_INDENT = 7
 DEFINITION_LIST_INDENT = 7
 OPTION_LIST_INDENT = 7
 BLOCKQOUTE_INDENT = 3.5
+LITERAL_BLOCK_INDENT = 3.5
 
 # Define two macros so man/roff can calculate the
 # indent/unindent margins by itself
@@ -107,7 +108,7 @@ class Writer(writers.Writer):
         self.output = visitor.astext()
 
 
-class Table:
+class Table(object):
     def __init__(self):
         self._rows = []
         self._options = ['center']
@@ -245,14 +246,14 @@ class Translator(nodes.NodeVisitor):
 
     def ensure_eol(self):
         """Ensure the last line in body is terminated by new line."""
-        if self.body[-1][-1] != '\n':
+        if len(self.body) > 0 and self.body[-1][-1] != '\n':
             self.body.append('\n')
 
     def astext(self):
         """Return the final formatted document as a string."""
         if not self.header_written:
             # ensure we get a ".TH" as viewers require it.
-            self.head.append(self.header())
+            self.append_header()
         # filter body
         for i in xrange(len(self.body)-1, 0, -1):
             # remove superfluous vertical gaps.
@@ -288,10 +289,10 @@ class Translator(nodes.NodeVisitor):
             text = text.replace(in_char, out_markup)
         # unicode
         text = self.deunicode(text)
+        # prevent interpretation of "." at line start
+        if text.startswith('.'):
+            text = '\\&' + text
         if self._in_literal:
-            # prevent interpretation of "." at line start
-            if text[0] == '.':
-                text = '\\&' + text
             text = text.replace('\n.', '\n\\&.')
         self.body.append(text)
 
@@ -299,7 +300,7 @@ class Translator(nodes.NodeVisitor):
         pass
 
     def list_start(self, node):
-        class enum_char:
+        class enum_char(object):
             enum_style = {
                     'bullet'     : '\\(bu',
                     'emdash'     : '\\(em',
@@ -376,8 +377,8 @@ class Translator(nodes.NodeVisitor):
         # .TH title_upper section date source manual
         if self.header_written:
             return
-        self.body.append(self.header())
-        self.body.append(MACRO_DEF)
+        self.head.append(self.header())
+        self.head.append(MACRO_DEF)
         self.header_written = 1
 
     def visit_address(self, node):
@@ -387,12 +388,27 @@ class Translator(nodes.NodeVisitor):
         pass
 
     def visit_admonition(self, node, name=None):
+        #
+        # Make admonitions a simple block quote
+        # with a strong heading
+        #
+        # Using .IP/.RE doesn't preserve indentation
+        # when admonitions contain bullets, literal,
+        # and/or block quotes.
+        #
         if name:
-            self.body.append('.IP %s\n' %
-                        self.language.labels.get(name, name))
+            # .. admonition:: has no name
+            self.body.append('.sp\n')
+            name = '%s%s:%s\n' % (
+                self.defs['strong'][0],
+                self.language.labels.get(name, name).upper(),
+                self.defs['strong'][1],
+                )        
+            self.body.append(name)
+        self.visit_block_quote(node)
 
     def depart_admonition(self, node):
-        self.body.append('.RE\n')
+        self.depart_block_quote(node)
 
     def visit_attention(self, node):
         self.visit_admonition(node, 'attention')
@@ -557,7 +573,7 @@ class Translator(nodes.NodeVisitor):
 
     def visit_document(self, node):
         # no blank line between comment and header.
-        self.body.append(self.comment(self.document_start).rstrip()+'\n')
+        self.head.append(self.comment(self.document_start).rstrip()+'\n')
         # writing header is postboned
         self.header_written = 0
 
@@ -799,12 +815,18 @@ class Translator(nodes.NodeVisitor):
         self.body.append(self.defs['literal'][1])
 
     def visit_literal_block(self, node):
+        # BUG/HACK: indent alway uses the _last_ indention,
+        # thus we need two of them.
+        self.indent(LITERAL_BLOCK_INDENT)
+        self.indent(0)        
         self.body.append(self.defs['literal_block'][0])
         self._in_literal = True
 
     def depart_literal_block(self, node):
         self._in_literal = False
         self.body.append(self.defs['literal_block'][1])
+        self.dedent()
+        self.dedent()
 
     def visit_math(self, node):
         self.document.reporter.warning('"math" role not supported',
@@ -876,7 +898,7 @@ class Translator(nodes.NodeVisitor):
     def visit_option(self, node):
         # each form of the option will be presented separately
         if self.context[-1] > 0:
-            self.body.append(', ')
+            self.body.append('\\fP,\\fB ')
         if self.context[-3] == '.BI':
             self.body.append('\\')
         self.body.append(' ')

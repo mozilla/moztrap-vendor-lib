@@ -1,4 +1,4 @@
-# $Id: __init__.py 6423 2010-09-17 21:38:29Z milde $
+# $Id: __init__.py 7648 2013-04-18 07:36:22Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -12,18 +12,26 @@ reStructuredText.
 
 __docformat__ = 'reStructuredText'
 
+import sys
+
 from docutils.utils import normalize_language_tag
+if sys.version_info < (2,5):
+    from docutils._compat import __import__
 
 _languages = {}
 
 def get_language(language_code):
     for tag in normalize_language_tag(language_code):
+        tag = tag.replace('-','_') # '-' not valid in module names
         if tag in _languages:
             return _languages[tag]
         try:
-            module = __import__(tag, globals(), locals())
+            module = __import__(tag, globals(), locals(), level=1)
         except ImportError:
-            continue
+            try:
+                module = __import__(tag, globals(), locals(), level=0)
+            except ImportError:
+                continue
         _languages[tag] = module
         return module
     return None

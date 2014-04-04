@@ -5,7 +5,7 @@
 
     Render math in HTML via dvipng.
 
-    :copyright: Copyright 2007-2011 by the Sphinx team, see AUTHORS.
+    :copyright: Copyright 2007-2014 by the Sphinx team, see AUTHORS.
     :license: BSD, see LICENSE for details.
 """
 
@@ -26,11 +26,18 @@ from docutils import nodes
 from sphinx.errors import SphinxError
 from sphinx.util.png import read_png_depth, write_png_depth
 from sphinx.util.osutil import ensuredir, ENOENT
-from sphinx.util.pycompat import b
+from sphinx.util.pycompat import b, sys_encoding
 from sphinx.ext.mathbase import setup_math as mathbase_setup, wrap_displaymath
 
 class MathExtError(SphinxError):
     category = 'Math extension error'
+
+    def __init__(self, msg, stderr=None, stdout=None):
+        if stderr:
+            msg += '\n[stderr]\n' + stderr.decode(sys_encoding, 'replace')
+        if stdout:
+            msg += '\n[stdout]\n' + stdout.decode(sys_encoding, 'replace')
+        SphinxError.__init__(self, msg)
 
 
 DOC_HEAD = r'''
@@ -75,8 +82,10 @@ def render_math(self, math):
     may not fail since that indicates a problem in the math source.
     """
     use_preview = self.builder.config.pngmath_use_preview
+    latex = DOC_HEAD + self.builder.config.pngmath_latex_preamble
+    latex += (use_preview and DOC_BODY_PREVIEW or DOC_BODY) % math
 
-    shasum = "%s.png" % sha(math.encode('utf-8')).hexdigest()
+    shasum = "%s.png" % sha(latex.encode('utf-8')).hexdigest()
     relfn = posixpath.join(self.builder.imgpath, 'math', shasum)
     outfn = path.join(self.builder.outdir, '_images', 'math', shasum)
     if path.isfile(outfn):
@@ -87,9 +96,6 @@ def render_math(self, math):
     if hasattr(self.builder, '_mathpng_warned_latex') or \
        hasattr(self.builder, '_mathpng_warned_dvipng'):
         return None, None
-
-    latex = DOC_HEAD + self.builder.config.pngmath_latex_preamble
-    latex += (use_preview and DOC_BODY_PREVIEW or DOC_BODY) % math
 
     # use only one tempdir per build -- the use of a directory is cleaner
     # than using temporary files, since we can clean up everything at once
@@ -130,8 +136,7 @@ def render_math(self, math):
 
     stdout, stderr = p.communicate()
     if p.returncode != 0:
-        raise MathExtError('latex exited with error:\n[stderr]\n%s\n'
-                           '[stdout]\n%s' % (stderr, stdout))
+        raise MathExtError('latex exited with error', stderr, stdout)
 
     ensuredir(path.dirname(outfn))
     # use some standard dvipng arguments
@@ -155,8 +160,7 @@ def render_math(self, math):
         return None, None
     stdout, stderr = p.communicate()
     if p.returncode != 0:
-        raise MathExtError('dvipng exited with error:\n[stderr]\n%s\n'
-                           '[stdout]\n%s' % (stderr, stdout))
+        raise MathExtError('dvipng exited with error', stderr, stdout)
     depth = None
     if use_preview:
         for line in stdout.splitlines():
@@ -187,11 +191,11 @@ def html_visit_math(self, node):
     try:
         fname, depth = render_math(self, '$'+node['latex']+'$')
     except MathExtError, exc:
-        msg = unicode(str(exc), 'utf-8', 'replace')
+        msg = unicode(exc)
         sm = nodes.system_message(msg, type='WARNING', level=2,
                                   backrefs=[], source=node['latex'])
         sm.walkabout(self)
-        self.builder.warn('display latex %r: ' % node['latex'] + str(exc))
+        self.builder.warn('display latex %r: ' % node['latex'] + msg)
         raise nodes.SkipNode
     if fname is None:
         # something failed -- use text-only as a bad substitute
@@ -237,7 +241,8 @@ def setup(app):
     app.add_config_value('pngmath_latex', 'latex', 'html')
     app.add_config_value('pngmath_use_preview', False, 'html')
     app.add_config_value('pngmath_dvipng_args',
-                         ['-gamma 1.5', '-D 110'], 'html')
+                         ['-gamma', '1.5', '-D', '110', '-bg', 'Transparent'],
+                         'html')
     app.add_config_value('pngmath_latex_args', [], 'html')
     app.add_config_value('pngmath_latex_preamble', '', 'html')
     app.add_config_value('pngmath_add_tooltips', True, 'html')
