@@ -1,5 +1,5 @@
-# coding: utf8
-# $Id: __init__.py 7338 2012-02-03 12:22:14Z milde $
+# coding: utf-8
+# $Id: __init__.py 7668 2013-06-04 12:46:30Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -12,12 +12,13 @@ __docformat__ = 'reStructuredText'
 import sys
 import os
 import os.path
+import re
 import warnings
 import unicodedata
 from docutils import ApplicationError, DataError
 from docutils import nodes
-from docutils.io import FileOutput
-from docutils.error_reporting import ErrorOutput, SafeString
+import docutils.io
+from docutils.utils.error_reporting import ErrorOutput, SafeString
 
 
 class SystemMessage(ApplicationError):
@@ -509,14 +510,31 @@ def get_stylesheet_list(settings):
     """
     assert not (settings.stylesheet and settings.stylesheet_path), (
             'stylesheet and stylesheet_path are mutually exclusive.')
-    if settings.stylesheet_path:
-        sheets = settings.stylesheet_path.split(",")
-    elif settings.stylesheet:
-        sheets = settings.stylesheet.split(",")
-    else:
-        sheets = []
-    # strip whitespace (frequently occuring in config files)
-    return [sheet.strip(u' \t\n') for sheet in sheets]
+    stylesheets = settings.stylesheet_path or settings.stylesheet or []
+    # programmatically set default can be string or unicode:
+    if not isinstance(stylesheets, list):
+        stylesheets = [path.strip() for path in stylesheets.split(',')]
+    # expand relative paths if found in stylesheet-dirs:
+    return [find_file_in_dirs(path, settings.stylesheet_dirs)
+            for path in stylesheets]
+
+def find_file_in_dirs(path, dirs):
+    """
+    Search for `path` in the list of directories `dirs`.
+
+    Return the first expansion that matches an existing file.
+    """
+    if os.path.isabs(path):
+        return path
+    for d in dirs:
+        if d == '.':
+            f = path
+        else:
+            d = os.path.expanduser(d)
+            f = os.path.join(d, path)
+        if os.path.exists(f):
+            return f
+    return path
 
 def get_trim_footnote_ref_space(settings):
     """
@@ -645,20 +663,20 @@ def normalize_language_tag(tag):
 
     Example:
 
-      >>> normalize_language_tag('de-AT-1901')
-      ['de_at_1901', 'de_at', 'de_1901', 'de']
+    >>> normalize_language_tag('de_AT-1901')
+    ['de-at-1901', 'de-at', 'de-1901', 'de']
     """
     # normalize:
-    tag = tag.lower().replace('-','_')
-    # find all combinations of subtags
+    tag = tag.lower().replace('_','-')
+    # split (except singletons, which mark the following tag as non-standard):
+    tag = re.sub(r'-([a-zA-Z0-9])-', r'-\1_', tag)
     taglist = []
-    base_tag= tag.split('_')[:1]
-    subtags = tag.split('_')[1:]
-    # print base_tag, subtags
+    subtags = [subtag.replace('_', '-') for subtag in tag.split('-')]
+    base_tag = [subtags.pop(0)]
+    # find all combinations of subtags
     for n in range(len(subtags), 0, -1):
         for tags in unique_combinations(subtags, n):
-            # print tags
-            taglist.append('_'.join(base_tag + tags))
+            taglist.append('-'.join(base_tag+tags))
     taglist += base_tag
     return taglist
 
@@ -699,7 +717,7 @@ class DependencyList(object):
                 of = None
             else:
                 of = output_file
-            self.file = FileOutput(destination_path=of,
+            self.file = docutils.io.FileOutput(destination_path=of,
                                    encoding='utf8', autoclose=False)
         else:
             self.file = None

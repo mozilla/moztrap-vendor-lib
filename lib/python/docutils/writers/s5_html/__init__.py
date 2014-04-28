@@ -1,4 +1,4 @@
-# $Id: __init__.py 7320 2012-01-19 22:33:02Z milde $
+# $Id: __init__.py 7494 2012-08-14 10:54:53Z milde $
 # Authors: Chris Liechti <cliechti@gmx.net>;
 #          David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
@@ -285,6 +285,8 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
         self.html_prolog.append(self.doctype)
         self.meta.insert(0, self.content_type % self.settings.output_encoding)
         self.head.insert(0, self.content_type % self.settings.output_encoding)
+        if self.math_header:
+            self.head.append(self.math_header)
 
         header = ''.join(self.s5_header)
         footer = ''.join(self.s5_footer)

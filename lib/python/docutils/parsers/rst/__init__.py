@@ -1,4 +1,4 @@
-# $Id: __init__.py 7320 2012-01-19 22:33:02Z milde $
+# $Id: __init__.py 7598 2013-01-30 12:39:24Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -73,7 +73,8 @@ __docformat__ = 'reStructuredText'
 import docutils.parsers
 import docutils.statemachine
 from docutils.parsers.rst import states
-from docutils import frontend, nodes
+from docutils import frontend, nodes, Component
+from docutils.transforms import universal
 
 
 class Parser(docutils.parsers.Parser):
@@ -133,10 +134,15 @@ class Parser(docutils.parsers.Parser):
           ['--raw-enabled'],
           {'action': 'store_true'}),
          ('Token name set for parsing code with Pygments: one of '
-          '"long", "short", or "none (no parsing)". Default is "short".',
+          '"long", "short", or "none (no parsing)". Default is "long".',
           ['--syntax-highlight'],
           {'choices': ['long', 'short', 'none'],
-           'default': 'short', 'metavar': '<format>'}),))
+           'default': 'long', 'metavar': '<format>'}),
+         ('Change straight quotation marks to typographic form: '
+          'one of "yes", "no", "alt[ernative]" (default "no").',
+          ['--smart-quotes'],
+          {'default': False, 'validator': frontend.validate_ternary}),
+        ))
 
     config_section = 'restructuredtext parser'
     config_section_dependencies = ('parsers',)
@@ -148,6 +154,10 @@ class Parser(docutils.parsers.Parser):
             self.initial_state = 'Body'
         self.state_classes = states.state_classes
         self.inliner = inliner
+
+    def get_transforms(self):
+        return Component.get_transforms(self) + [
+            universal.SmartQuotes]
 
     def parse(self, inputstring, document):
         """Parse `inputstring` and populate `document`, a document tree."""
@@ -321,7 +331,7 @@ class Directive(object):
         and the line number added.
 
         Preferably use the `debug`, `info`, `warning`, `error`, or `severe`
-        wrapper methods, e.g. ``self.error(message)`` to generate an 
+        wrapper methods, e.g. ``self.error(message)`` to generate an
         ERROR-level directive error.
         """
         return DirectiveError(level, message)

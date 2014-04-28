@@ -1,4 +1,4 @@
-# $Id: images.py 7256 2011-12-14 23:53:38Z milde $
+# $Id: images.py 7594 2013-01-21 17:14:17Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -17,7 +17,7 @@ from docutils.parsers.rst import directives, states
 from docutils.nodes import fully_normalize_name, whitespace_normalize_name
 from docutils.parsers.rst.roles import set_classes
 try: # check for the Python Imaging Library
-    import PIL
+    import PIL.Image
 except ImportError:
     try:  # sometimes PIL modules are put in PYTHONPATH's root
         import Image
@@ -149,6 +149,8 @@ class Figure(Image):
             if isinstance(first_node, nodes.paragraph):
                 caption = nodes.caption(first_node.rawsource, '',
                                         *first_node.children)
+                caption.source = first_node.source
+                caption.line = first_node.line
                 figure_node += caption
             elif not (isinstance(first_node, nodes.comment)
                       and len(first_node) == 0):

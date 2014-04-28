@@ -5,10 +5,11 @@
 
     Utilities parsing and analyzing Python code.
 
-    :copyright: Copyright 2007-2011 by the Sphinx team, see AUTHORS.
+    :copyright: Copyright 2007-2014 by the Sphinx team, see AUTHORS.
     :license: BSD, see LICENSE for details.
 """
 
+import sys
 from os import path
 
 from sphinx import package_dir
@@ -21,7 +22,8 @@ from sphinx.util.docstrings import prepare_docstring, prepare_commentdoc
 
 
 # load the Python grammar
-_grammarfile = path.join(package_dir, 'pycode', 'Grammar.txt')
+_grammarfile = path.join(package_dir, 'pycode',
+                         'Grammar-py%d.txt' % sys.version_info[0])
 pygrammar = driver.load_grammar(_grammarfile)
 pydriver = driver.Driver(pygrammar, convert=nodes.convert)
 
@@ -241,7 +243,10 @@ class ModuleAnalyzer(object):
         """Generate tokens from the source."""
         if self.tokens is not None:
             return
-        self.tokens = list(tokenize.generate_tokens(self.source.readline))
+        try:
+            self.tokens = list(tokenize.generate_tokens(self.source.readline))
+        except tokenize.TokenError, err:
+            raise PycodeError('tokenizing failed', err)
         self.source.close()
 
     def parse(self):

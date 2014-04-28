@@ -32,14 +32,14 @@ r"""
     The graph is inserted as a PNG+image map into HTML and a PDF in
     LaTeX.
 
-    :copyright: Copyright 2007-2011 by the Sphinx team, see AUTHORS.
+    :copyright: Copyright 2007-2014 by the Sphinx team, see AUTHORS.
     :license: BSD, see LICENSE for details.
 """
 
 import re
 import sys
 import inspect
-import __builtin__
+import __builtin__ as __builtin__ # as __builtin__ is for lib2to3 compatibility
 try:
     from hashlib import md5
 except ImportError:
@@ -154,8 +154,18 @@ class InheritanceGraph(object):
             nodename = self.class_name(cls, parts)
             fullname = self.class_name(cls, 0)
 
+            # Use first line of docstring as tooltip, if available
+            tooltip = None
+            try:
+                if cls.__doc__:
+                    doc = cls.__doc__.strip().split("\n")[0]
+                    if doc:
+                        tooltip = '"%s"' % doc.replace('"', '\\"')
+            except Exception:  # might raise AttributeError for strange classes
+                pass
+
             baselist = []
-            all_classes[cls] = (nodename, fullname, baselist)
+            all_classes[cls] = (nodename, fullname, baselist, tooltip)
             for base in cls.__bases__:
                 if not show_builtins and base in builtins:
                     continue
@@ -188,7 +198,7 @@ class InheritanceGraph(object):
 
     def get_all_class_names(self):
         """Get all of the class names involved in the graph."""
-        return [fullname for (_, fullname, _) in self.class_info]
+        return [fullname for (_, fullname, _, _) in self.class_info]
 
     # These are the default attrs for graphviz
     default_graph_attrs = {
@@ -199,8 +209,8 @@ class InheritanceGraph(object):
         'shape': 'box',
         'fontsize': 10,
         'height': 0.25,
-        'fontname': 'Vera Sans, DejaVu Sans, Liberation Sans, '
-                    'Arial, Helvetica, sans',
+        'fontname': '"Vera Sans, DejaVu Sans, Liberation Sans, '
+                    'Arial, Helvetica, sans"',
         'style': '"setlinewidth(0.5)"',
     }
     default_edge_attrs = {
@@ -241,12 +251,13 @@ class InheritanceGraph(object):
         res.append('digraph %s {\n' % name)
         res.append(self._format_graph_attrs(g_attrs))
 
-        for name, fullname, bases in self.class_info:
+        for name, fullname, bases, tooltip in sorted(self.class_info):
             # Write the node
             this_node_attrs = n_attrs.copy()
-            url = urls.get(fullname)
-            if url is not None:
-                this_node_attrs['URL'] = '"%s"' % url
+            if fullname in urls:
+                this_node_attrs['URL'] = '"%s"' % urls[fullname]
+            if tooltip:
+                this_node_attrs['tooltip'] = tooltip
             res.append('  "%s" [%s];\n' %
                        (name, self._format_node_attrs(this_node_attrs)))
 
@@ -314,7 +325,8 @@ class InheritanceDiagram(Directive):
 
 
 def get_graph_hash(node):
-    return md5(node['content'] + str(node['parts'])).hexdigest()[-10:]
+    encoded = (node['content'] + str(node['parts'])).encode('utf-8')
+    return md5(encoded).hexdigest()[-10:]
 
 
 def html_visit_inheritance_diagram(self, node):

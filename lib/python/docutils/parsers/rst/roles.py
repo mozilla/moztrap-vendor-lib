@@ -1,4 +1,4 @@
-# $Id: roles.py 7310 2012-01-09 15:01:15Z milde $
+# $Id: roles.py 7514 2012-09-14 14:27:12Z milde $
 # Author: Edward Loper <edloper@gradient.cis.upenn.edu>
 # Copyright: This module has been placed in the public domain.
 
@@ -320,11 +320,10 @@ def code_role(role, rawtext, text, lineno, inliner, options={}, content=[]):
     set_classes(options)
     language = options.get('language', '')
     classes = ['code']
-    if language:
-        classes.append(language)
     if 'classes' in options:
         classes.extend(options['classes'])
-
+    if language and language not in classes:
+        classes.append(language)
     try:
         tokens = Lexer(utils.unescape(text, 1), language,
                        inliner.document.settings.syntax_highlight)

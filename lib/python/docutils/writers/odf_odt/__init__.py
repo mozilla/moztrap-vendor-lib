@@ -1,4 +1,4 @@
-# $Id: __init__.py 7422 2012-05-03 10:55:30Z milde $
+# $Id: __init__.py 7645 2013-04-08 17:35:15Z dkuhlman $
 # Author: Dave Kuhlman <dkuhlman@rexx.com>
 # Copyright: This module has been placed in the public domain.
 
@@ -21,13 +21,10 @@ from xml.dom import minidom
 import time
 import re
 import StringIO
-import inspect
-import imp
 import copy
 import urllib2
 import docutils
 from docutils import frontend, nodes, utils, writers, languages
-from docutils.parsers import rst
 from docutils.readers import standalone
 from docutils.transforms import references
 
@@ -64,8 +61,9 @@ try:
 except ImportError, exp:
     pygments = None
 
-try: # check for the Python Imaging Library
-    import PIL
+# check for the Python Imaging Library
+try:
+    import PIL.Image
 except ImportError:
     try:  # sometimes PIL modules are put in PYTHONPATH's root
         import Image
@@ -136,7 +134,7 @@ CONTENT_NAMESPACE_DICT = CNSD = {
     'oooc': 'http://openoffice.org/2004/calc',
     'ooow': 'http://openoffice.org/2004/writer',
     'presentation': 'urn:oasis:names:tc:opendocument:xmlns:presentation:1.0',
-    
+
     'script': 'urn:oasis:names:tc:opendocument:xmlns:script:1.0',
     'style': 'urn:oasis:names:tc:opendocument:xmlns:style:1.0',
     'svg': 'urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0',
@@ -534,7 +532,7 @@ class Writer(writers.Writer):
         'stylesheet_path',
         )
 
-    config_section = 'opendocument odf writer'
+    config_section = 'odf_odt writer'
     config_section_dependencies = (
         'writers',
         )
@@ -946,6 +944,45 @@ class ODFTranslator(nodes.GenericNodeVisitor):
                     })
                 el.text = text
                 self.body_text_element.insert(0, el)
+        el = self.find_first_text_p(self.body_text_element)
+        if el is not None:
+            self.attach_page_style(el)
+
+    def find_first_text_p(self, el):
+        """Search the generated doc and return the first <text:p> element.
+        """
+        if (
+                el.tag == 'text:p' or
+                el.tag == 'text:h'
+                ):
+            return el
+        elif el.getchildren():
+            for child in el.getchildren():
+                el1 = self.find_first_text_p(child)
+                if el1 is not None:
+                    return el1
+            return None
+        else:
+            return None
+
+    def attach_page_style(self, el):
+        """Attach the default page style.
+
+        Create an automatic-style that refers to the current style
+        of this element and that refers to the default page style.
+        """
+        current_style = el.get('text:style-name')
+        style_name = 'P1003'
+        el1 = SubElement(
+            self.automatic_styles, 'style:style', attrib={
+                'style:name': style_name,
+                'style:master-page-name': "rststyle-pagedefault",
+                'style:family': "paragraph",
+                }, nsdict=SNSD)
+        if current_style:
+            el1.set('style:parent-style-name', current_style)
+        el.set('text:style-name', style_name)
+
 
     def rststyle(self, name, parameters=( )):
         """
@@ -999,7 +1036,14 @@ class ODFTranslator(nodes.GenericNodeVisitor):
         if master_el is None:
             return
         path = '{%s}master-page' % (SNSD['style'], )
-        master_el = master_el.find(path)
+        master_el_container = master_el.findall(path)
+        master_el = None
+        target_attrib = '{%s}name' % (SNSD['style'], )
+        target_name = self.rststyle('pagedefault')
+        for el in master_el_container:
+            if el.get(target_attrib) == target_name:
+                master_el = el
+                break
         if master_el is None:
             return
         el1 = master_el
@@ -1452,29 +1496,6 @@ class ODFTranslator(nodes.GenericNodeVisitor):
 
     def default_departure(self, node):
         self.document.reporter.warning('missing depart_%s' % (node.tagname, ))
-
-##     def add_text_to_element(self, text):
-##         # Are we in a citation.  If so, add text to current element, not
-##         #   to children.
-##         # Are we in mixed content?  If so, add the text to the
-##         #   etree tail of the previous sibling element.
-##         if not self.in_citation and len(self.current_element.getchildren()) > 0:
-##             if self.current_element.getchildren()[-1].tail:
-##                 self.current_element.getchildren()[-1].tail += text
-##             else:
-##                 self.current_element.getchildren()[-1].tail = text
-##         else:
-##             if self.current_element.text:
-##                 self.current_element.text += text
-##             else:
-##                 self.current_element.text = text
-## 
-##     def visit_Text(self, node):
-##         # Skip nodes whose text has been processed in parent nodes.
-##         if isinstance(node.parent, docutils.nodes.literal_block):
-##             return
-##         text = node.astext()
-##         self.add_text_to_element(text)
 
     def visit_Text(self, node):
         # Skip nodes whose text has been processed in parent nodes.
@@ -1994,21 +2015,27 @@ class ODFTranslator(nodes.GenericNodeVisitor):
         elif self.citation_id is not None:
             el = self.append_p('textbody')
             self.set_current_element(el)
-            el.text = '['
             if self.settings.create_links:
+                el0 = SubElement(el, 'text:span')
+                el0.text = '['
                 el1 = self.append_child('text:reference-mark-start', attrib={
                         'text:name': '%s' % (self.citation_id, ),
                         })
+            else:
+                el.text = '['
 
     def depart_label(self, node):
         if isinstance(node.parent, docutils.nodes.footnote):
             pass
         elif self.citation_id is not None:
-            self.current_element.text += ']'
             if self.settings.create_links:
                 el = self.append_child('text:reference-mark-end', attrib={
                         'text:name': '%s' % (self.citation_id, ),
                         })
+                el0 = SubElement(self.current_element, 'text:span')
+                el0.text = ']'
+            else:
+                self.current_element.text += ']'
             self.set_to_parent()
 
     def visit_generated(self, node):
@@ -2226,8 +2253,6 @@ class ODFTranslator(nodes.GenericNodeVisitor):
             'draw:z-index': '0',
             }
         attrib['svg:width'] = width
-        # dbg
-        #attrib['svg:height'] = height
         el3 = SubElement(current_element, 'draw:frame', attrib=attrib)
         attrib = {}
         el4 = SubElement(el3, 'draw:text-box', attrib=attrib)

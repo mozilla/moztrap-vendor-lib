@@ -1,4 +1,4 @@
- # $Id: statemachine.py 7320 2012-01-19 22:33:02Z milde $
+ # $Id: statemachine.py 7464 2012-06-25 13:16:03Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -111,7 +111,7 @@ import re
 import types
 import unicodedata
 from docutils import utils
-from docutils.error_reporting import ErrorOutput
+from docutils.utils.error_reporting import ErrorOutput
 
 
 class StateMachine:
