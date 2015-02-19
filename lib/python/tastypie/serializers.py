@@ -1,5 +1,6 @@
 import datetime
 from StringIO import StringIO
+import django
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.serializers import json
@@ -7,7 +8,7 @@ from django.utils import simplejson
 from django.utils.encoding import force_unicode
 from tastypie.bundle import Bundle
 from tastypie.exceptions import UnsupportedFormat
-from tastypie.utils import format_datetime, format_date, format_time
+from tastypie.utils import format_datetime, format_date, format_time, make_naive
 try:
     import lxml
     from lxml.etree import parse as parse_xml
@@ -60,7 +61,7 @@ class Serializer(object):
     This handles most types of data as well as the following output formats::
 
         * json
-        * jsonp
+        * jsonp (Disabled by default)
         * xml
         * yaml
         * html
@@ -70,7 +71,7 @@ class Serializer(object):
     various format methods (i.e. ``to_json``), by changing the
     ``formats/content_types`` options or by altering the other hook methods.
     """
-    formats = ['json', 'jsonp', 'xml', 'yaml', 'html', 'plist']
+    formats = ['json', 'xml', 'yaml', 'html', 'plist']
     content_types = {
         'json': 'application/json',
         'jsonp': 'text/javascript',
@@ -120,6 +121,7 @@ class Serializer(object):
 
         Default is ``iso-8601``, which looks like "2010-12-16T03:02:14".
         """
+        data = make_naive(data)
         if self.datetime_formatting == 'rfc-2822':
             return format_datetime(data)
 
@@ -282,10 +284,16 @@ class Serializer(object):
             element = Element(name or 'value')
             simple_data = self.to_simple(data, options)
             data_type = get_type_string(simple_data)
+
             if data_type != 'string':
                 element.set('type', get_type_string(simple_data))
+
             if data_type != 'null':
-                element.text = force_unicode(simple_data)
+                if isinstance(simple_data, unicode):
+                    element.text = simple_data
+                else:
+                    element.text = force_unicode(simple_data)
+
         return element
 
     def from_etree(self, data):
@@ -328,7 +336,11 @@ class Serializer(object):
         """
         options = options or {}
         data = self.to_simple(data, options)
-        return simplejson.dumps(data, cls=json.DjangoJSONEncoder, sort_keys=True)
+
+        if django.get_version() >= '1.5':
+            return json.json.dumps(data, cls=json.DjangoJSONEncoder, sort_keys=True, ensure_ascii=False)
+        else:
+            return simplejson.dumps(data, cls=json.DjangoJSONEncoder, sort_keys=True, ensure_ascii=False)
 
     def from_json(self, content):
         """
@@ -340,9 +352,16 @@ class Serializer(object):
         """
         Given some Python data, produces JSON output wrapped in the provided
         callback.
+
+        Due to a difference between JSON and Javascript, two
+        newline characters, \u2028 and \u2029, need to be escaped.
+        See http://timelessrepo.com/json-isnt-a-javascript-subset for
+        details.
         """
         options = options or {}
-        return '%s(%s)' % (options['callback'], self.to_json(data, options))
+        json = self.to_json(data, options)
+        json = json.replace(u'\u2028', u'\\u2028').replace(u'\u2029', u'\\u2029')
+        return u'%s(%s)' % (options['callback'], json)
 
     def to_xml(self, data, options=None):
         """
