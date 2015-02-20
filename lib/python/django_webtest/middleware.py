@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from django.contrib.auth.middleware import RemoteUserMiddleware
 from django.core.exceptions import ImproperlyConfigured
-from django.core import signals
-from django.db import close_connection
 from django.contrib import auth
 
 class WebtestUserMiddleware(RemoteUserMiddleware):
@@ -39,7 +37,11 @@ class WebtestUserMiddleware(RemoteUserMiddleware):
         # getting passed in the headers, then the correct user is already
         # persisted in the session and we don't need to continue.
         if request.user.is_authenticated():
-            if request.user.username == self.clean_username(username, request):
+            if hasattr(request.user, "get_username"):
+                authenticated_username = request.user.get_username()
+            else:
+                authenticated_username = request.user.username
+            if authenticated_username == self.clean_username(username, request):
                 return
         # We are seeing this user for the first time in this session, attempt
         # to authenticate the user.
@@ -54,28 +56,3 @@ class WebtestUserMiddleware(RemoteUserMiddleware):
 class DisableCSRFCheckMiddleware(object):
     def process_request(self, request):
         request._dont_enforce_csrf_checks = True
-
-
-class DjangoWsgiFix(object):
-    """Django closes the database connection after every request;
-    this breaks the use of transactions in your tests. This wraps
-    around Django's WSGI interface and will disable the critical
-    signal handler for every request served.
-
-    Note that we really do need to do this individually a every
-    request, not just once when our WSGI hook is installed, since
-    Django's own test client does the same thing; it would reinstall
-    the signal handler if used in combination with us.
-
-    From django-test-utils.
-    Note: that's WSGI middleware, not django's.
-    """
-    def __init__(self, app):
-        self.app = app
-
-    def __call__(self, environ, start_response):
-        signals.request_finished.disconnect(close_connection)
-        try:
-            return self.app(environ, start_response)
-        finally:
-            signals.request_finished.connect(close_connection)

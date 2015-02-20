@@ -1,78 +1,93 @@
 # -*- coding: utf-8 -*-
 from django.conf import settings
-from django.contrib.auth.models import User
 from django.test.signals import template_rendered
 from django.core.handlers.wsgi import WSGIHandler
 from django.test import TestCase
 from django.test.client import store_rendered_templates
 from django.utils.functional import curry
 from django.utils.importlib import import_module
-from webtest import TestApp
-from webtest.compat import to_string
-
-from django_webtest.middleware import DjangoWsgiFix
-from django_webtest.response import DjangoWebtestResponse
-
+from django.core import signals
+from django.db import close_connection
 try:
     from django.core.servers.basehttp import AdminMediaHandler as StaticFilesHandler
 except ImportError:
     from django.contrib.staticfiles.handlers import StaticFilesHandler
 
+from webtest import TestApp
+
+from django_webtest.response import DjangoWebtestResponse
+from django_webtest.compat import to_string
+
 
 class DjangoTestApp(TestApp):
+    response_class = DjangoWebtestResponse
 
     def __init__(self, extra_environ=None, relative_to=None):
         super(DjangoTestApp, self).__init__(self.get_wsgi_handler(), extra_environ, relative_to)
 
     def get_wsgi_handler(self):
-        return DjangoWsgiFix(StaticFilesHandler(WSGIHandler()))
+        return StaticFilesHandler(WSGIHandler())
 
     def _update_environ(self, environ, user):
         if user:
             environ = environ or {}
-            if isinstance(user, User):
+            if hasattr(user, 'get_username'):
+                # custom user, django 1.5+
+                environ['WEBTEST_USER'] = to_string(user.get_username())
+            elif hasattr(user, 'username'):
+                # standard User
                 environ['WEBTEST_USER'] = to_string(user.username)
             else:
+                # username
                 environ['WEBTEST_USER'] = to_string(user)
         return environ
 
     def do_request(self, req, status, expect_errors):
-        req.environ.setdefault('REMOTE_ADDR', '127.0.0.1')
 
-        # is this a workaround for https://code.djangoproject.com/ticket/11111 ?
-        req.environ['REMOTE_ADDR'] = to_string(req.environ['REMOTE_ADDR'])
-        req.environ['PATH_INFO'] = to_string(req.environ['PATH_INFO'])
+        # Django closes the database connection after every request;
+        # this breaks the use of transactions in your tests.
+        signals.request_finished.disconnect(close_connection)
 
-        # Curry a data dictionary into an instance of the template renderer
-        # callback function.
-        data = {}
-        on_template_render = curry(store_rendered_templates, data)
-        template_rendered.connect(on_template_render)
+        try:
+            req.environ.setdefault('REMOTE_ADDR', '127.0.0.1')
 
-        response = super(DjangoTestApp, self).do_request(req, status, expect_errors)
+            # is this a workaround for https://code.djangoproject.com/ticket/11111 ?
+            req.environ['REMOTE_ADDR'] = to_string(req.environ['REMOTE_ADDR'])
+            req.environ['PATH_INFO'] = to_string(req.environ['PATH_INFO'])
 
-        # Add any rendered template detail to the response.
-        # If there was only one template rendered (the most likely case),
-        # flatten the list to a single element.
-        def flattend(detail):
-            if len(data[detail]) == 1:
-                return data[detail][0]
-            return data[detail]
+            # Curry a data dictionary into an instance of the template renderer
+            # callback function.
+            data = {}
+            on_template_render = curry(store_rendered_templates, data)
+            template_rendered.connect(on_template_render)
 
-        response.context = None
-        response.template = None
-        response.templates = data.get('templates', None)
+            response = super(DjangoTestApp, self).do_request(req, status, expect_errors)
 
-        if data.get('context'):
-            response.context = flattend('context')
+            # Add any rendered template detail to the response.
+            # If there was only one template rendered (the most likely case),
+            # flatten the list to a single element.
+            def flattend(detail):
+                if len(data[detail]) == 1:
+                    return data[detail][0]
+                return data[detail]
 
-        if data.get('template'):
-            response.template = flattend('template')
-        elif data.get('templates'):
-            response.template = flattend('templates')
+            response.context = None
+            response.template = None
+            response.templates = data.get('templates', None)
 
-        response.__class__ = DjangoWebtestResponse
-        return response
+            if data.get('context'):
+                response.context = flattend('context')
+
+            if data.get('template'):
+                response.template = flattend('template')
+            elif data.get('templates'):
+                response.template = flattend('templates')
+
+            response.__class__ = self.response_class
+            return response
+        finally:
+            signals.request_finished.connect(close_connection)
+
 
     def get(self, url, params=None, headers=None, extra_environ=None,
             status=None, expect_errors=False, user=None, auto_follow=False,
@@ -128,6 +143,7 @@ class WebTest(TestCase):
     extra_environ = {}
     csrf_checks = True
     setup_auth = True
+    app_class = DjangoTestApp
 
     def _patch_settings(self):
         '''
@@ -188,7 +204,7 @@ class WebTest(TestCase):
         Resets self.app (drops the stored state): cookies, etc.
         Note: this renews only self.app, not the responses fetched by self.app.
         """
-        self.app = DjangoTestApp(extra_environ=self.extra_environ)
+        self.app = self.app_class(extra_environ=self.extra_environ)
 
     def __call__(self, result=None):
         self._patch_settings()
