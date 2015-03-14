@@ -1,18 +1,18 @@
-from django.forms import (Form, ModelForm, BaseModelForm, model_to_dict,
-                          fields_for_model, save_instance, ValidationError,
-                          Media, MediaDefiningClass)
+# flake8: noqa
+from django.forms import (BaseModelForm, model_to_dict, fields_for_model,
+                          save_instance, ValidationError, Media,
+                          MediaDefiningClass)
 
-from django.contrib.localflavor.generic.forms import (
-                          DEFAULT_DATE_INPUT_FORMATS,
-                          DEFAULT_DATETIME_INPUT_FORMATS,
-)
+from .fields import *
+from .forms import *
+from .models import *
+from .widgets import *
 
-# Import SelectDateWidget from extras
-from django.forms.extras import SelectDateWidget
+try:
+    from . import gis
+except Exception:
+    import warnings
+    warnings.warn(
+        "Unable to import floppyforms.gis, geometry widgets not available")
 
-from floppyforms.fields import *
-from floppyforms.models import *
-from floppyforms.widgets import *
-from floppyforms import gis
-
-__version___ = '0.4.7'
+__version__ = '1.3.0'

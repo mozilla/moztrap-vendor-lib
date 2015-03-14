@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.utils import translation
+from django.utils import translation, six
 
 try:
     from django.contrib.gis import gdal, geos
@@ -59,15 +59,16 @@ class BaseGeometryWidget(forms.Textarea):
     def get_context(self, name, value, attrs=None, extra_context={}):
         # If a string reaches here (via a validation error on another
         # field) then just reconstruct the Geometry.
-        if isinstance(value, basestring):
+        if isinstance(value, six.text_type):
             try:
                 value = geos.GEOSGeometry(value)
             except (geos.GEOSException, ValueError):
                 value = None
 
-        if (value and
-            value.geom_type.upper() != self.geom_type and
-            self.geom_type != 'GEOMETRY'):
+        if (
+            value and value.geom_type.upper() != self.geom_type and
+            self.geom_type != 'GEOMETRY'
+        ):
             value = None
 
         # Defaulting the WKT value to a blank string
@@ -86,7 +87,12 @@ class BaseGeometryWidget(forms.Textarea):
         context = super(BaseGeometryWidget, self).get_context(name, wkt, attrs)
         context['module'] = 'map_%s' % name.replace('-', '_')
         context['name'] = name
-        context['ADMIN_MEDIA_PREFIX'] = settings.ADMIN_MEDIA_PREFIX
+        # Django >= 1.4 doesn't have ADMIN_MEDIA_PREFIX anymore, we must
+        # rely on contrib.staticfiles.
+        if hasattr(settings, 'ADMIN_MEDIA_PREFIX'):
+            context['ADMIN_MEDIA_PREFIX'] = settings.ADMIN_MEDIA_PREFIX
+        else:
+            context['ADMIN_MEDIA_PREFIX'] = settings.STATIC_URL + 'admin/'
         context['LANGUAGE_BIDI'] = translation.get_language_bidi()
         return context
 
@@ -134,7 +140,7 @@ class BaseMetacartaWidget(BaseGeometryWidget):
 
     class Media:
         js = (
-            'http://openlayers.org/api/2.10/OpenLayers.js',
+            'http://openlayers.org/api/OpenLayers.js',
             'floppyforms/js/MapWidget.js',
         )
 
@@ -146,7 +152,7 @@ class BaseOsmWidget(BaseGeometryWidget):
 
     class Media:
         js = (
-            'http://openlayers.org/api/2.10/OpenLayers.js',
+            'http://openlayers.org/api/OpenLayers.js',
             'http://www.openstreetmap.org/openlayers/OpenStreetMap.js',
             'floppyforms/js/MapWidget.js',
         )
@@ -159,8 +165,7 @@ class BaseGMapWidget(BaseGeometryWidget):
 
     class Media:
         js = (
-            'http://openlayers.org/dev/OpenLayers.js',  # FIXME: use 2.11
-                                                        # when it's out
+            'http://openlayers.org/api/OpenLayers.js',
             'floppyforms/js/MapWidget.js',
             'http://maps.google.com/maps/api/js?sensor=false',
         )
