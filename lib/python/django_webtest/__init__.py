@@ -2,21 +2,29 @@
 from django.conf import settings
 from django.test.signals import template_rendered
 from django.core.handlers.wsgi import WSGIHandler
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.test.client import store_rendered_templates
 from django.utils.functional import curry
 from django.utils.importlib import import_module
 from django.core import signals
-from django.db import close_connection
+try:
+    from django.db import close_old_connections
+except ImportError:
+    from django.db import close_connection
+    close_old_connections = None
 try:
     from django.core.servers.basehttp import AdminMediaHandler as StaticFilesHandler
 except ImportError:
     from django.contrib.staticfiles.handlers import StaticFilesHandler
 
 from webtest import TestApp
+try:
+    from webtest.utils import NoDefault
+except ImportError:
+    NoDefault = ''
 
 from django_webtest.response import DjangoWebtestResponse
-from django_webtest.compat import to_string
+from django_webtest.compat import to_string, to_wsgi_safe_string
 
 
 class DjangoTestApp(TestApp):
@@ -31,22 +39,19 @@ class DjangoTestApp(TestApp):
     def _update_environ(self, environ, user):
         if user:
             environ = environ or {}
-            if hasattr(user, 'get_username'):
-                # custom user, django 1.5+
-                environ['WEBTEST_USER'] = to_string(user.get_username())
-            elif hasattr(user, 'username'):
-                # standard User
-                environ['WEBTEST_USER'] = to_string(user.username)
-            else:
-                # username
-                environ['WEBTEST_USER'] = to_string(user)
+            username = _get_username(user)
+            environ['WEBTEST_USER'] = to_wsgi_safe_string(username)
         return environ
 
     def do_request(self, req, status, expect_errors):
 
         # Django closes the database connection after every request;
         # this breaks the use of transactions in your tests.
-        signals.request_finished.disconnect(close_connection)
+        if close_old_connections is not None: # Django 1.6+
+            signals.request_started.disconnect(close_old_connections)
+            signals.request_finished.disconnect(close_old_connections)
+        else: # Django < 1.6
+            signals.request_finished.disconnect(close_connection)
 
         try:
             req.environ.setdefault('REMOTE_ADDR', '127.0.0.1')
@@ -86,15 +91,19 @@ class DjangoTestApp(TestApp):
             response.__class__ = self.response_class
             return response
         finally:
-            signals.request_finished.connect(close_connection)
+            if close_old_connections: # Django 1.6+
+                signals.request_started.connect(close_old_connections)
+                signals.request_finished.connect(close_old_connections)
+            else: # Django < 1.6
+                signals.request_finished.connect(close_connection)
 
 
     def get(self, url, params=None, headers=None, extra_environ=None,
             status=None, expect_errors=False, user=None, auto_follow=False,
-            content_type=None):
+            content_type=None, **kwargs):
         extra_environ = self._update_environ(extra_environ, user)
         response = super(DjangoTestApp, self).get(
-                  url, params, headers, extra_environ, status, expect_errors)
+                url, params, headers, extra_environ, status, expect_errors, **kwargs)
 
         is_redirect = lambda r: r.status_int >= 300 and r.status_int < 400
         while auto_follow and is_redirect(response):
@@ -104,27 +113,42 @@ class DjangoTestApp(TestApp):
 
     def post(self, url, params='', headers=None, extra_environ=None,
              status=None, upload_files=None, expect_errors=False,
-             content_type=None, user=None):
+             content_type=None, user=None, **kwargs):
         extra_environ = self._update_environ(extra_environ, user)
         return super(DjangoTestApp, self).post(
                    url, params, headers, extra_environ, status,
-                   upload_files, expect_errors, content_type)
+                   upload_files, expect_errors, content_type, **kwargs)
 
     def put(self, url, params='', headers=None, extra_environ=None,
              status=None, upload_files=None, expect_errors=False,
-             content_type=None, user=None):
+             content_type=None, user=None, **kwargs):
         extra_environ = self._update_environ(extra_environ, user)
         return super(DjangoTestApp, self).put(
                    url, params, headers, extra_environ, status,
                    upload_files, expect_errors, content_type)
 
-    def delete(self, url, params='', headers=None, extra_environ=None,
+    def patch(self, url, params='', headers=None, extra_environ=None,
+             status=None, upload_files=None, expect_errors=False,
+             content_type=None, user=None, **kwargs):
+        extra_environ = self._update_environ(extra_environ, user)
+        return super(DjangoTestApp, self).patch(
+                   url, params, headers, extra_environ, status,
+                   upload_files, expect_errors, content_type, **kwargs)
+
+    def options(self, url, params='', headers=None, extra_environ=None,
+             status=None, upload_files=None, expect_errors=False,
+             content_type=None, user=None, **kwargs):
+        extra_environ = self._update_environ(extra_environ, user)
+        return super(DjangoTestApp, self).options(
+                   url, params, headers, extra_environ, status, **kwargs)
+
+    def delete(self, url, params=NoDefault, headers=None, extra_environ=None,
              status=None, expect_errors=False,
-             content_type=None, user=None):
+             content_type=None, user=None, **kwargs):
         extra_environ = self._update_environ(extra_environ, user)
         return super(DjangoTestApp, self).delete(
                    url, params, headers, extra_environ, status,
-                   expect_errors, content_type)
+                   expect_errors, content_type, **kwargs)
 
     @property
     def session(self):
@@ -138,7 +162,8 @@ class DjangoTestApp(TestApp):
                 return engine.SessionStore(cookie)
         return {}
 
-class WebTest(TestCase):
+
+class WebTestMixin(object):
 
     extra_environ = {}
     csrf_checks = True
@@ -209,6 +234,28 @@ class WebTest(TestCase):
     def __call__(self, result=None):
         self._patch_settings()
         self.renew_app()
-        res = super(WebTest, self).__call__(result)
+        res = super(WebTestMixin, self).__call__(result)
         self._unpatch_settings()
         return res
+
+
+class WebTest(WebTestMixin, TestCase):
+    pass
+
+
+class TransactionWebTest(WebTestMixin, TransactionTestCase):
+    pass
+
+
+def _get_username(user):
+    """
+    Return user's username. ``user`` can be standard Django User
+    instance, a custom user model or just an username (as string).
+    """
+    if hasattr(user, 'get_username'):  # custom user, django 1.5+
+        return user.get_username()
+    elif hasattr(user, 'username'):    # standard User
+        return user.username
+    else:                              # assume user is just an username
+        return user
+
