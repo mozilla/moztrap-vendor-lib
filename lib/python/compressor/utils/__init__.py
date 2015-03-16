@@ -1,36 +1,10 @@
 # -*- coding: utf-8 -*-
+from __future__ import unicode_literals
 import os
-import sys
+
+from django.utils import six
 
 from compressor.exceptions import FilterError
-
-if sys.version_info < (2, 5):
-    # Add any http://docs.python.org/library/functions.html?#any to Python < 2.5
-    def any(seq):
-        for item in seq:
-            if item:
-                return True
-        return False
-
-else:
-    any = any
-
-
-if sys.version_info < (2, 6):
-    def walk(root, topdown=True, onerror=None, followlinks=False):
-        """
-        A version of os.walk that can follow symlinks for Python < 2.6
-        """
-        for dirpath, dirnames, filenames in os.walk(root, topdown, onerror):
-            yield (dirpath, dirnames, filenames)
-            if followlinks:
-                for d in dirnames:
-                    p = os.path.join(dirpath, d)
-                    if os.path.islink(p):
-                        for link_dirpath, link_dirnames, link_filenames in walk(p):
-                            yield (link_dirpath, link_dirnames, link_filenames)
-else:
-    from os import walk
 
 
 def get_class(class_string, exception=FilterError):
@@ -39,15 +13,14 @@ def get_class(class_string, exception=FilterError):
     """
     if not hasattr(class_string, '__bases__'):
         try:
-            class_string = class_string.encode('ascii')
+            class_string = str(class_string)
             mod_name, class_name = get_mod_func(class_string)
-            if class_name != '':
-                cls = getattr(__import__(mod_name, {}, {}, ['']), class_name)
+            if class_name:
+                return getattr(__import__(mod_name, {}, {}, [str('')]), class_name)
         except (ImportError, AttributeError):
-            pass
-        else:
-            return cls
-    raise exception('Failed to import %s' % class_string)
+            raise exception('Failed to import %s' % class_string)
+
+        raise exception("Invalid class path '%s'" % class_string)
 
 
 def get_mod_func(callback):
@@ -70,13 +43,14 @@ def get_pathext(default_pathext=None):
         default_pathext = os.pathsep.join(['.COM', '.EXE', '.BAT', '.CMD'])
     return os.environ.get('PATHEXT', default_pathext)
 
+
 def find_command(cmd, paths=None, pathext=None):
     """
     Searches the PATH for the given command and returns its path
     """
     if paths is None:
         paths = os.environ.get('PATH', '').split(os.pathsep)
-    if isinstance(paths, basestring):
+    if isinstance(paths, six.string_types):
         paths = [paths]
     # check if there are funny path extensions for executables, e.g. Windows
     if pathext is None:

@@ -1,13 +1,13 @@
+import json
+import hashlib
 import os
 import socket
 import time
 
 from django.core.cache import get_cache
 from django.core.files.base import ContentFile
-from django.utils import simplejson
-from django.utils.encoding import smart_str
+from django.utils.encoding import force_text, smart_bytes
 from django.utils.functional import SimpleLazyObject
-from django.utils.hashcompat import md5_constructor
 from django.utils.importlib import import_module
 
 from compressor.conf import settings
@@ -18,18 +18,18 @@ _cachekey_func = None
 
 
 def get_hexdigest(plaintext, length=None):
-    digest = md5_constructor(smart_str(plaintext)).hexdigest()
+    digest = hashlib.md5(smart_bytes(plaintext)).hexdigest()
     if length:
         return digest[:length]
     return digest
 
 
 def simple_cachekey(key):
-    return 'django_compressor.%s' % smart_str(key)
+    return 'django_compressor.%s' % force_text(key)
 
 
 def socket_cachekey(key):
-    return "django_compressor.%s.%s" % (socket.gethostname(), smart_str(key))
+    return 'django_compressor.%s.%s' % (socket.gethostname(), force_text(key))
 
 
 def get_cachekey(*args, **kwargs):
@@ -39,7 +39,7 @@ def get_cachekey(*args, **kwargs):
             mod_name, func_name = get_mod_func(
                 settings.COMPRESS_CACHE_KEY_FUNCTION)
             _cachekey_func = getattr(import_module(mod_name), func_name)
-        except (AttributeError, ImportError), e:
+        except (AttributeError, ImportError) as e:
             raise ImportError("Couldn't import cache key function %s: %s" %
                               (settings.COMPRESS_CACHE_KEY_FUNCTION, e))
     return _cachekey_func(*args, **kwargs)
@@ -49,8 +49,8 @@ def get_mtime_cachekey(filename):
     return get_cachekey("mtime.%s" % get_hexdigest(filename))
 
 
-def get_offline_hexdigest(source):
-    return get_hexdigest([smart_str(getattr(s, 's', s)) for s in source])
+def get_offline_hexdigest(render_template_string):
+    return get_hexdigest(render_template_string)
 
 
 def get_offline_cachekey(source):
@@ -62,18 +62,31 @@ def get_offline_manifest_filename():
     return os.path.join(output_dir, settings.COMPRESS_OFFLINE_MANIFEST)
 
 
+_offline_manifest = None
+
+
 def get_offline_manifest():
-    filename = get_offline_manifest_filename()
-    if default_storage.exists(filename):
-        return simplejson.load(default_storage.open(filename))
-    else:
-        return {}
+    global _offline_manifest
+    if _offline_manifest is None:
+        filename = get_offline_manifest_filename()
+        if default_storage.exists(filename):
+            with default_storage.open(filename) as fp:
+                _offline_manifest = json.loads(fp.read().decode('utf8'))
+        else:
+            _offline_manifest = {}
+    return _offline_manifest
+
+
+def flush_offline_manifest():
+    global _offline_manifest
+    _offline_manifest = None
 
 
 def write_offline_manifest(manifest):
     filename = get_offline_manifest_filename()
-    default_storage.save(filename,
-                         ContentFile(simplejson.dumps(manifest, indent=2)))
+    content = json.dumps(manifest, indent=2).encode('utf8')
+    default_storage.save(filename, ContentFile(content))
+    flush_offline_manifest()
 
 
 def get_templatetag_cachekey(compressor, mode, kind):
@@ -99,6 +112,17 @@ def get_hashed_mtime(filename, length=12):
     except OSError:
         return None
     return get_hexdigest(mtime, length)
+
+
+def get_hashed_content(filename, length=12):
+    try:
+        filename = os.path.realpath(filename)
+    except OSError:
+        return None
+
+    # should we make sure that file is utf-8 encoded?
+    with open(filename, 'rb') as file:
+        return get_hexdigest(file.read(), length)
 
 
 def cache_get(key):

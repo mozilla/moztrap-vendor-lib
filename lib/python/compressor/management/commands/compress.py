@@ -1,39 +1,33 @@
+# flake8: noqa
 import os
 import sys
-from types import MethodType
+
 from fnmatch import fnmatch
 from optparse import make_option
 
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
-
-from django.core.management.base import  NoArgsCommand, CommandError
-from django.template import Context, Template, TemplateDoesNotExist, TemplateSyntaxError
+from django.core.management.base import NoArgsCommand, CommandError
+import django.template
+from django.template import Context
+from django.utils import six
 from django.utils.datastructures import SortedDict
 from django.utils.importlib import import_module
-from django.template.loader import get_template
-from django.template.loader_tags import ExtendsNode, BlockNode, BLOCK_CONTEXT_KEY
-
-try:
-    from django.template.loaders.cached import Loader as CachedLoader
-except ImportError:
-    CachedLoader = None
+from django.template.loader import get_template  # noqa Leave this in to preload template locations
 
 from compressor.cache import get_offline_hexdigest, write_offline_manifest
 from compressor.conf import settings
-from compressor.exceptions import OfflineGenerationError
+from compressor.exceptions import (OfflineGenerationError, TemplateSyntaxError,
+                                   TemplateDoesNotExist)
 from compressor.templatetags.compress import CompressorNode
-from compressor.utils import walk, any
 
-
-def patched_get_parent(self, context):
-    # Patch template returned by get_parent to make sure their _render method is
-    # just returning the context instead of actually rendering stuff.
-    compiled_template = self._old_get_parent(context)
-    compiled_template._render = MethodType(lambda self, c: c, compiled_template)
-    return compiled_template
+if six.PY3:
+    # there is an 'io' module in python 2.6+, but io.StringIO does not
+    # accept regular strings, just unicode objects
+    from io import StringIO
+else:
+    try:
+        from cStringIO import StringIO
+    except ImportError:
+        from StringIO import StringIO
 
 
 class Command(NoArgsCommand):
@@ -48,9 +42,12 @@ class Command(NoArgsCommand):
                 "COMPRESS_ENABLED setting is not True.", dest='force'),
         make_option('--follow-links', default=False, action='store_true',
             help="Follow symlinks when traversing the COMPRESS_ROOT "
-                "(which defaults to MEDIA_ROOT). Be aware that using this "
+                "(which defaults to STATIC_ROOT). Be aware that using this "
                 "can lead to infinite recursion if a link points to a parent "
                 "directory of itself.", dest='follow_links'),
+        make_option('--engine', default="django", action="store",
+            help="Specifies the templating engine. jinja2 or django",
+            dest="engine"),
     )
 
     requires_model_validation = False
@@ -63,11 +60,16 @@ class Command(NoArgsCommand):
                     find_template as finder_func)
             except ImportError:
                 from django.template.loader import (
-                    find_template_source as finder_func)
+                    find_template_source as finder_func)  # noqa
             try:
+                # Force django to calculate template_source_loaders from
+                # TEMPLATE_LOADERS settings, by asking to find a dummy template
                 source, name = finder_func('test')
-            except TemplateDoesNotExist:
+            except django.template.TemplateDoesNotExist:
                 pass
+            # Reload template_source_loaders now that it has been calculated ;
+            # it should contain the list of valid, instanciated template loaders
+            # to use.
             from django.template.loader import template_source_loaders
         loaders = []
         # If template loader is CachedTemplateLoader, return the loaders
@@ -80,12 +82,27 @@ class Command(NoArgsCommand):
         # )
         # The loaders will return django.template.loaders.filesystem.Loader
         # and django.template.loaders.app_directories.Loader
+        # The cached Loader and similar ones include a 'loaders' attribute
+        # so we look for that.
         for loader in template_source_loaders:
-            if CachedLoader is not None and isinstance(loader, CachedLoader):
+            if hasattr(loader, 'loaders'):
                 loaders.extend(loader.loaders)
             else:
                 loaders.append(loader)
         return loaders
+
+    def __get_parser(self, engine):
+        if engine == "jinja2":
+            from compressor.offline.jinja2 import Jinja2Parser
+            env = settings.COMPRESS_JINJA2_GET_ENVIRONMENT()
+            parser = Jinja2Parser(charset=settings.FILE_CHARSET, env=env)
+        elif engine == "django":
+            from compressor.offline.django import DjangoParser
+            parser = DjangoParser(charset=settings.FILE_CHARSET)
+        else:
+            raise OfflineGenerationError("Invalid templating engine specified.")
+
+        return parser
 
     def compress(self, log=None, **options):
         """
@@ -127,7 +144,7 @@ class Command(NoArgsCommand):
             log.write("Considering paths:\n\t" + "\n\t".join(paths) + "\n")
         templates = set()
         for path in paths:
-            for root, dirs, files in walk(path,
+            for root, dirs, files in os.walk(path,
                     followlinks=options.get('followlinks', False)):
                 templates.update(os.path.join(root, name)
                     for name in files if not name.startswith('.') and
@@ -139,69 +156,79 @@ class Command(NoArgsCommand):
         if verbosity > 1:
             log.write("Found templates:\n\t" + "\n\t".join(templates) + "\n")
 
+        engine = options.get("engine", "django")
+        parser = self.__get_parser(engine)
+
         compressor_nodes = SortedDict()
         for template_name in templates:
             try:
-                template_file = open(template_name)
-                try:
-                    template = Template(template_file.read().decode(
-                                        settings.FILE_CHARSET))
-                finally:
-                    template_file.close()
+                template = parser.parse(template_name)
             except IOError:  # unreadable file -> ignore
                 if verbosity > 0:
                     log.write("Unreadable template at: %s\n" % template_name)
                 continue
-            except TemplateSyntaxError:  # broken template -> ignore
+            except TemplateSyntaxError as e:  # broken template -> ignore
                 if verbosity > 0:
-                    log.write("Invalid template at: %s\n" % template_name)
+                    log.write("Invalid template %s: %s\n" % (template_name, e))
+                continue
+            except TemplateDoesNotExist:  # non existent template -> ignore
+                if verbosity > 0:
+                    log.write("Non-existent template at: %s\n" % template_name)
                 continue
             except UnicodeDecodeError:
                 if verbosity > 0:
                     log.write("UnicodeDecodeError while trying to read "
                               "template %s\n" % template_name)
-            nodes = list(self.walk_nodes(template))
+            try:
+                nodes = list(parser.walk_nodes(template))
+            except (TemplateDoesNotExist, TemplateSyntaxError) as e:
+                # Could be an error in some base template
+                if verbosity > 0:
+                    log.write("Error parsing template %s: %s\n" % (template_name, e))
+                continue
             if nodes:
                 template.template_name = template_name
                 compressor_nodes.setdefault(template, []).extend(nodes)
 
         if not compressor_nodes:
             raise OfflineGenerationError(
-                "No 'compress' template tags found in templates.")
+                "No 'compress' template tags found in templates."
+                "Try running compress command with --follow-links and/or"
+                "--extension=EXTENSIONS")
 
         if verbosity > 0:
             log.write("Found 'compress' tags in:\n\t" +
-                      "\n\t".join((t.template_name for t in compressor_nodes.keys())) + "\n")
+                      "\n\t".join((t.template_name
+                                   for t in compressor_nodes.keys())) + "\n")
 
         log.write("Compressing... ")
         count = 0
         results = []
-        offline_manifest = {}
-        for template, nodes in compressor_nodes.iteritems():
-            context = Context(settings.COMPRESS_OFFLINE_CONTEXT)
-            extra_context = {}
-            firstnode = template.nodelist[0]
-            if isinstance(firstnode, ExtendsNode):
-                # If this template has a ExtendsNode, we apply our patch to
-                # generate the necessary context, and then use it for all the
-                # nodes in it, just in case (we don't know which nodes were
-                # in a block)
-                firstnode._old_get_parent = firstnode.get_parent
-                firstnode.get_parent = MethodType(patched_get_parent, firstnode)
-                extra_context = firstnode.render(context)
-                context.render_context = extra_context.render_context
+        offline_manifest = SortedDict()
+        init_context = parser.get_init_context(settings.COMPRESS_OFFLINE_CONTEXT)
+
+        for template, nodes in compressor_nodes.items():
+            context = Context(init_context)
+            template._log = log
+            template._log_verbosity = verbosity
+
+            if not parser.process_template(template, context):
+                continue
+
             for node in nodes:
                 context.push()
-                if extra_context and node._block_name:
-                    context['block'] = context.render_context[BLOCK_CONTEXT_KEY].pop(node._block_name)
-                    if context['block']:
-                        context['block'].context = context
-                key = get_offline_hexdigest(node.nodelist)
+                parser.process_node(template, context, node)
+                rendered = parser.render_nodelist(template, context, node)
+                key = get_offline_hexdigest(rendered)
+
+                if key in offline_manifest:
+                    continue
+
                 try:
-                    result = node.render(context, forced=True)
-                except Exception, e:
-                    raise CommandError("An error occured during rendering: "
-                                       "%s" % e)
+                    result = parser.render_node(template, context, node)
+                except Exception as e:
+                    raise CommandError("An error occured during rendering %s: "
+                                       "%s" % (template.template_name, e))
                 offline_manifest[key] = result
                 context.pop()
                 results.append(result)
@@ -212,17 +239,6 @@ class Command(NoArgsCommand):
         log.write("done\nCompressed %d block(s) from %d template(s).\n" %
                   (count, len(compressor_nodes)))
         return count, results
-
-    def walk_nodes(self, node, block_name=None):
-        for node in getattr(node, "nodelist", []):
-            if isinstance(node, BlockNode):
-                block_name = node.name
-            if isinstance(node, CompressorNode):
-                node._block_name = block_name
-                yield node
-            else:
-                for node in self.walk_nodes(node, block_name=block_name):
-                    yield node
 
     def handle_extensions(self, extensions=('html',)):
         """
@@ -249,10 +265,10 @@ class Command(NoArgsCommand):
         if not settings.COMPRESS_ENABLED and not options.get("force"):
             raise CommandError(
                 "Compressor is disabled. Set the COMPRESS_ENABLED "
-                "settting or use --force to override.")
+                "setting or use --force to override.")
         if not settings.COMPRESS_OFFLINE:
             if not options.get("force"):
                 raise CommandError(
-                    "Offline compressiong is disabled. Set "
+                    "Offline compression is disabled. Set "
                     "COMPRESS_OFFLINE or use the --force to override.")
         self.compress(sys.stdout, **options)

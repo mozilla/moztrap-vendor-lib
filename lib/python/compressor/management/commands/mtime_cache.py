@@ -6,7 +6,6 @@ from django.core.management.base import NoArgsCommand, CommandError
 
 from compressor.conf import settings
 from compressor.cache import cache, get_mtime, get_mtime_cachekey
-from compressor.utils import walk
 
 
 class Command(NoArgsCommand):
@@ -22,7 +21,7 @@ class Command(NoArgsCommand):
                 "'.*' and '*~'."),
         make_option('--follow-links', dest='follow_links', action='store_true',
             help="Follow symlinks when traversing the COMPRESS_ROOT "
-                "(which defaults to MEDIA_ROOT). Be aware that using this "
+                "(which defaults to STATIC_ROOT). Be aware that using this "
                 "can lead to infinite recursion if a link points to a parent "
                 "directory of itself."),
         make_option('-c', '--clean', dest='clean', action='store_true',
@@ -58,7 +57,7 @@ class Command(NoArgsCommand):
         files_to_add = set()
         keys_to_delete = set()
 
-        for root, dirs, files in walk(settings.COMPRESS_ROOT, followlinks=options['follow_links']):
+        for root, dirs, files in os.walk(settings.COMPRESS_ROOT, followlinks=options['follow_links']):
             for dir_ in dirs:
                 if self.is_ignored(dir_):
                     dirs.remove(dir_)
@@ -75,9 +74,9 @@ class Command(NoArgsCommand):
 
         if keys_to_delete:
             cache.delete_many(list(keys_to_delete))
-            print "Deleted mtimes of %d files from the cache." % len(keys_to_delete)
+            print("Deleted mtimes of %d files from the cache." % len(keys_to_delete))
 
         if files_to_add:
             for filename in files_to_add:
                 get_mtime(filename)
-            print "Added mtimes of %d files to cache." % len(files_to_add)
+            print("Added mtimes of %d files to cache." % len(files_to_add))
