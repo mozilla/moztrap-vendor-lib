@@ -157,6 +157,7 @@ class SessionTestsMixin(object):
         self.session.flush()
         self.assertFalse(self.session.exists(prev_key))
         self.assertNotEqual(self.session.session_key, prev_key)
+        self.assertIsNone(self.session.session_key)
         self.assertTrue(self.session.modified)
         self.assertTrue(self.session.accessed)
 
@@ -168,6 +169,11 @@ class SessionTestsMixin(object):
         self.session.cycle_key()
         self.assertNotEqual(self.session.session_key, prev_key)
         self.assertEqual(list(self.session.items()), prev_data)
+
+    def test_save_doesnt_clear_data(self):
+        self.session['a'] = 'b'
+        self.session.save()
+        self.assertEqual(self.session['a'], 'b')
 
     def test_invalid_key(self):
         # Submitting an invalid session key (either by guessing, or if the db has
@@ -304,6 +310,21 @@ class SessionTestsMixin(object):
             finally:
                 self.session.delete(old_session_key)
                 self.session.delete(new_session_key)
+
+    def test_session_load_does_not_create_record(self):
+        """
+        Loading an unknown session key does not create a session record.
+
+        Creating session records on load is a DOS vulnerability.
+        """
+        if self.backend is CookieSession:
+            raise unittest.SkipTest("Cookie backend doesn't have an external store to create records in.")
+        session = self.backend('someunknownkey')
+        session.load()
+
+        self.assertFalse(session.exists(session.session_key))
+        # provided unknown key was cycled, not reused
+        self.assertNotEqual(session.session_key, 'someunknownkey')
 
 
 class DatabaseSessionTests(SessionTestsMixin, TestCase):
@@ -565,6 +586,75 @@ class SessionMiddlewareTests(unittest.TestCase):
 
         # Check that the value wasn't saved above.
         self.assertNotIn('hello', request.session.load())
+
+    def test_session_delete_on_end(self):
+        request = RequestFactory().get('/')
+        response = HttpResponse('Session test')
+        middleware = SessionMiddleware()
+
+        # Before deleting, there has to be an existing cookie
+        request.COOKIES[settings.SESSION_COOKIE_NAME] = 'abc'
+
+        # Simulate a request that ends the session
+        middleware.process_request(request)
+        request.session.flush()
+
+        # Handle the response through the middleware
+        response = middleware.process_response(request, response)
+
+        # Check that the cookie was deleted, not recreated.
+        # A deleted cookie header looks like:
+        #  Set-Cookie: sessionid=; expires=Thu, 01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/
+        self.assertEqual(
+            'Set-Cookie: %s=; expires=Thu, 01-Jan-1970 00:00:00 GMT; '
+            'Max-Age=0; Path=/' % settings.SESSION_COOKIE_NAME,
+            str(response.cookies[settings.SESSION_COOKIE_NAME])
+        )
+
+    @override_settings(SESSION_COOKIE_DOMAIN='.example.local')
+    def test_session_delete_on_end_with_custom_domain(self):
+        request = RequestFactory().get('/')
+        response = HttpResponse('Session test')
+        middleware = SessionMiddleware()
+
+        # Before deleting, there has to be an existing cookie
+        request.COOKIES[settings.SESSION_COOKIE_NAME] = 'abc'
+
+        # Simulate a request that ends the session
+        middleware.process_request(request)
+        request.session.flush()
+
+        # Handle the response through the middleware
+        response = middleware.process_response(request, response)
+
+        # Check that the cookie was deleted, not recreated.
+        # A deleted cookie header with a custom domain looks like:
+        #  Set-Cookie: sessionid=; Domain=.example.local;
+        #              expires=Thu, 01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/
+        self.assertEqual(
+            'Set-Cookie: %s=; Domain=.example.local; expires=Thu, '
+            '01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/' % (
+                settings.SESSION_COOKIE_NAME,
+            ),
+            str(response.cookies[settings.SESSION_COOKIE_NAME])
+        )
+
+    def test_flush_empty_without_session_cookie_doesnt_set_cookie(self):
+        request = RequestFactory().get('/')
+        response = HttpResponse('Session test')
+        middleware = SessionMiddleware()
+
+        # Simulate a request that ends the session
+        middleware.process_request(request)
+        request.session.flush()
+
+        # Handle the response through the middleware
+        response = middleware.process_response(request, response)
+
+        # A cookie should not be set.
+        self.assertEqual(response.cookies, {})
+        # The session is accessed so "Vary: Cookie" should be set.
+        self.assertEqual(response['Vary'], 'Cookie')
 
 
 class CookieSessionTests(SessionTestsMixin, TestCase):
